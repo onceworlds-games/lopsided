@@ -25,6 +25,7 @@ export const Aiming = defineSystem({
     const hand = seat?.get(Hand);
     const aim = seat?.get(Aim);
 
+    if (input.pressed('boulder') && input.device === 'keyboard') beat.keyboard = true;
     if (input.pressed('boulder')) {
       if (flow.phase === 'lobby' || (hand?.boulder && clock.live)) {
         beat.armed = !beat.armed;

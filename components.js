@@ -91,6 +91,8 @@ export const Beat = defineResource('Beat', {
   dragging: t.bool(false),
   /** The table creaked when it passed its tipping point (again only once it has come back). */
   creaked: t.bool(false),
+  /** A key has been used on this page (the HUD names keys only then, or when a mouse is about). */
+  keyboard: t.bool(false),
 });
 
 /** The latest "TIPPED BY ..." to show over the table: text, colour and when it began (the world's clock). */

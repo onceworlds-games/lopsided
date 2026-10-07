@@ -6,6 +6,7 @@ import { boardOf, mySeat } from '../queries.js';
 import { TABLE, danger } from '../rules.js';
 import { COLORS, LAYERS, SPILL, THUD, seatStyle } from '../theme.js';
 import { FALL_SECONDS } from './physics.js';
+import { WIDE_ASPECT, screenLayout } from '../view.js';
 import { sandboxOf } from './sandbox.js';
 import { lobbyColor } from './aim.js';
 
@@ -226,30 +227,18 @@ export const TableLook = defineSystem({
   },
 });
 
-/** Screen pixels the HUD takes at the top while a round is on (the round, the clock and the beat panel), and the share kept at the bottom (more on a phone, for the thumbs and the touch button). */
-const HUD_TOP_PX = 186;
-const HUD_BOTTOM = 0.05;
-const HUD_BOTTOM_TALL = 0.11;
-/** Half the room the table and its seats need: on a wide screen across (with the seat columns) and down (the table), on a tall one across (the table) and down (with the seat rows). */
-const WIDE = { x: TABLE.radius + 9.5, y: TABLE.radius + 1.3 };
-const TALL = { x: TABLE.radius + 1.1, y: TABLE.radius + 5.8 };
-
+/** The camera that fits the table and its seats under the HUD, leaving the prompts their room (view.js `screenLayout`). */
 export const CameraFit = defineSystem({
   name: 'lopsided:camera-fit',
   stage: 'late',
   query: [TableCamera, Camera, Transform],
   run({ query, ui, flow, game }) {
-    const aspect = aspectOf(ui);
-    const poster = servicesOf(game).poster?.active;
-    const screenH = ui?.safe.screen?.h || 720;
-    const top = poster || flow.phase === 'title' ? 0 : clamp(HUD_TOP_PX / screenH, 0.1, 0.3);
-    const bottom = poster || flow.phase === 'title' ? 0 : aspect >= 1.05 ? HUD_BOTTOM : HUD_BOTTOM_TALL;
-    const free = 1 - top - bottom;
-    const need = aspect >= 1.05 ? WIDE : TALL;
-    const height = Math.max((need.x * 2) / aspect, (need.y * 2) / free);
+    const screen = ui?.safe.screen;
+    const hud = !servicesOf(game).poster?.active && flow.phase !== 'title';
+    const layout = screenLayout(screen?.w ?? 1280, screen?.h ?? 720, { hud, scale: ui?.scale });
     query.each((_entity, _tag, camera, tr) => {
-      camera.height = height;
-      tr.position.set(0, (height * (top - bottom)) / 2, 0);
+      camera.height = layout.height;
+      tr.position.set(0, layout.y, 0);
     });
   },
 });

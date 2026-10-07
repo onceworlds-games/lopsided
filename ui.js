@@ -2,8 +2,9 @@ import { defineModule } from '@onceworlds/engine';
 import { UI, servicesOf } from '@onceworlds/engine/modules';
 import { Aim, Beat, Board, Hand, RoundClock, Seat } from './components.js';
 import { boardOf, mySeat, plainStones } from './queries.js';
-import { BEATS, BOULDER_KEPT, STONE, TABLE, danger, targetTilt } from './rules.js';
+import { BEATS, STONE, TABLE, danger, targetTilt } from './rules.js';
 import { COLORS, seatStyle } from './theme.js';
+import { screenLayout } from './view.js';
 
 // The HUD answers "what now?" at a glance: the lean (a marble that rolls to the low side, red past the tipping point, and a ghost marble
 // for where your aimed stone would send it), the beats left, the seconds to the drop, and your boulder. Two words appear when they
@@ -79,29 +80,34 @@ const pips = (state, color) =>
     },
   });
 
-/** Your boulder: a dark puck, lit when armed, faded once used. With a keyboard it is a button too (on a phone the platform's button is). */
-function boulderChip(state, onToggle) {
+/**
+ * Your boulder, as a button: "BOULDER" while it is off, gold "ARMED" while your next drop is the boulder, and a faded "USED" puck once it
+ * has dropped. On a touch screen the UI makes it thumb-sized (56 px); the key ("B") is only named where a keyboard is the input.
+ */
+function boulderControl(state, onToggle, keys) {
   if (state.seat < 0) return null;
-  const style = seatStyle(state.seat);
-  const chip = UI.custom({
-    w: 40,
-    h: 40,
-    draw(p, r) {
-      const cx = r.x + r.w / 2;
-      const cy = r.y + r.h / 2;
-      p.withAlpha(state.boulder ? 1 : 0.3, () => {
-        if (state.armed && state.boulder) p.circle(cx, cy, 19, { fill: '#00000000', stroke: COLORS.gold, strokeWidth: 4 });
-        p.circle(cx, cy, 14, { fill: style.edge, stroke: COLORS.ink, strokeWidth: 2 });
-        p.circle(cx, cy, 8, { fill: '#00000000', stroke: style.fill, strokeWidth: 3 });
-      });
-    },
-  });
-  const kept = state.boulder && !state.armed && UI.label(`+${BOULDER_KEPT.points}`, { size: 18, color: COLORS.gold, weight: 800 });
-  if (!onToggle || !state.boulder) return UI.column({ gap: 0, align: 'center' }, chip, kept);
-  return UI.button(state.armed ? 'ARMED' : 'BOULDER  B', { kind: state.armed ? 'primary' : 'secondary', onClick: onToggle });
+  if (!state.boulder) {
+    const style = seatStyle(state.seat);
+    return UI.row(
+      { gap: 6, align: 'center' },
+      UI.custom({
+        w: 30,
+        h: 30,
+        draw(p, r) {
+          p.withAlpha(0.35, () => {
+            p.circle(r.x + r.w / 2, r.y + r.h / 2, 13, { fill: style.edge, stroke: COLORS.ink, strokeWidth: 2 });
+            p.circle(r.x + r.w / 2, r.y + r.h / 2, 7, { fill: '#00000000', stroke: style.fill, strokeWidth: 3 });
+          });
+        },
+      }),
+      UI.label('USED', { size: 18, color: 'dim' }),
+    );
+  }
+  const label = state.armed ? 'ARMED' : keys ? 'BOULDER (B)' : 'BOULDER';
+  return UI.button(label, { key: 'boulder', kind: state.armed ? 'primary' : 'secondary', onClick: onToggle ?? undefined, disabled: !onToggle });
 }
 
-export function hudTree(state, onToggle = null) {
+export function hudTree(state, onToggle = null, keys = false) {
   const color = state.seat >= 0 ? seatStyle(state.seat).fill : COLORS.gold;
   const word =
     state.phase === 'idle' ? UI.label('GET READY', { size: 24, color: 'accent' })
@@ -116,22 +122,27 @@ export function hudTree(state, onToggle = null) {
       pips(state, color),
       state.phase === 'aim' && UI.bar(state.fraction, { w: 8 * 14, h: 6, fill: state.left <= 1 ? COLORS.danger : color }),
     ),
-    boulderChip(state, onToggle),
+    boulderControl(state, onToggle, keys),
   );
 }
 
-/** The first prompt, over the middle of the (still empty) table until you first aim: what the game is, in three words. */
-export function firstTree(state) {
-  if ((state.phase !== 'aim' && state.phase !== 'idle') || state.aimed || state.seat < 0) return null;
-  return UI.label('TAP THE TABLE', { size: 34, color: COLORS.white, weight: 800, outline: true });
+/**
+ * The prompts: what to do now, in two or three words, shown only while it matters. "TAP THE TABLE" until you first aim, "AIM!" when a
+ * beat is running out and you haven't. They sit where view.js `screenLayout` keeps room for them, never over the table.
+ */
+export function promptTree(state, { maxWidth = 0 } = {}) {
+  if (state.seat < 0 || (state.phase !== 'aim' && state.phase !== 'idle')) return null;
+  const big = { weight: 800, outline: true, align: 'center', ...(maxWidth > 0 ? { maxWidth } : {}) };
+  if (!state.aimed) return UI.label('TAP THE TABLE', { size: 32, color: COLORS.white, ...big });
+  if (state.phase === 'aim' && !state.hasAim && state.left < 2.5) return UI.label('AIM!', { size: 34, color: COLORS.danger, ...big });
+  return null;
 }
 
-/** The two-word prompts under the table: what to do now, shown only while it matters. */
-export function promptTree(state) {
-  if (state.phase !== 'aim' && state.phase !== 'idle') return null;
-  if (state.armed && state.boulder) return UI.label('BOULDER ARMED', { size: 26, color: COLORS.gold, weight: 800, outline: true });
-  if (state.phase === 'aim' && state.aimed && !state.hasAim && state.seat >= 0 && state.left < 2.5) return UI.label('AIM!', { size: 30, color: COLORS.danger, weight: 800, outline: true });
-  return null;
+/** Whether to name keys: a keyboard is the input (not touch, not a pad) and a mouse or a key has actually been used on this page. */
+export function keyboardInUse(input, touch, beat) {
+  if (!input || touch) return false;
+  if (input.device !== 'keyboard' && input.device !== 'mouse') return false;
+  return input.pointer('aim')?.type === 'mouse' || !!beat?.keyboard;
 }
 
 export const GameUI = () =>
@@ -141,11 +152,33 @@ export const GameUI = () =>
       const { ui } = servicesOf(game);
       const playing = ({ flow }) => flow !== null && flow.phase === 'playing' && !servicesOf(game).poster?.active;
       const me = () => servicesOf(game).net?.me ?? 'me';
-      // Under the round and the clock (the standard `flow.hud`), which sit at the top centre.
-      // With a keyboard and mouse the boulder is also a button on the HUD (B); on a phone the platform's touch button does it.
+      const layoutOf = ({ width, height, scale }) => screenLayout(width * scale, height * scale, { scale });
+      // The boulder button presses the same action as the B key (systems/aim.js toggles it).
       const toggle = () => servicesOf(game).input?.tap?.('boulder');
-      ui.view('lopsided:hud', ({ world, touch }) => hudTree(hudState(world, me()), touch ? null : toggle), { anchor: 'top', offset: [0, 58], order: 4, when: playing });
-      ui.view('lopsided:first', ({ world }) => firstTree(hudState(world, me())) ?? UI.spacer(), { anchor: 'center', order: 5, when: playing });
-      ui.view('lopsided:prompt', ({ world }) => promptTree(hudState(world, me())) ?? UI.spacer(), { anchor: 'bottom', offset: [0, 24], order: 5, when: playing });
+      // Under the round and the clock (the standard `flow.hud`), which sit at the top centre.
+      ui.view(
+        'lopsided:hud',
+        (ctx) => hudTree(hudState(ctx.world, me()), toggle, keyboardInUse(servicesOf(game).input, ctx.touch, ctx.world.resource(Beat))),
+        { anchor: 'top', offset: [0, 58], order: 4, when: playing },
+      );
+      // Prompts under the seats (a tall screen, or a wide one with no room beside the table). Only words, so they may sit where the thumbs
+      // rest: kept "safe" they would be pushed up over the table on a phone...
+      ui.view('lopsided:prompt', (ctx) => promptTree(hudState(ctx.world, me())) ?? UI.spacer(), {
+        anchor: 'bottom',
+        offset: [0, 18],
+        order: 5,
+        safe: false,
+        when: (ctx) => playing(ctx) && layoutOf(ctx).prompt === 'bottom',
+      });
+      // ...or in the free space beside the left seat column, near the top, clear of the thumbs (a wide screen).
+      ui.view(
+        'lopsided:prompt-side',
+        (ctx) => {
+          const room = Math.max(60, layoutOf(ctx).side / ctx.scale - 16);
+          const prompt = promptTree(hudState(ctx.world, me()), { maxWidth: room });
+          return prompt ? UI.column({ w: room, align: 'center' }, prompt) : UI.spacer();
+        },
+        { anchor: 'top-left', offset: [8, 64], order: 5, when: (ctx) => playing(ctx) && layoutOf(ctx).prompt === 'left' },
+      );
     },
   });

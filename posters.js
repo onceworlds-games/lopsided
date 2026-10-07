@@ -108,7 +108,7 @@ export const Posters = () =>
       const active = () => servicesOf(game).poster?.active;
       ui.view(
         'poster-hud',
-        () => hudTree({ phase: 'aim', beat: 3, left: 2.4, fraction: 0.6, lean: { x: 0.07, y: -0.05 }, preview: { x: 0.03, y: -0.02 }, danger: 0.9, seat: 0, boulder: true, armed: false, aimed: true, hasAim: true }),
+        () => hudTree({ phase: 'aim', beat: 3, left: 2.4, fraction: 0.6, lean: { x: 0.07, y: -0.05 }, preview: { x: 0.03, y: -0.02 }, danger: 0.9, seat: 0, boulder: true, armed: false, aimed: true, hasAim: true }, () => {}),
         { anchor: 'top', offset: [0, 30], order: 9, safe: false, when: () => active() === 'action' },
       );
     },

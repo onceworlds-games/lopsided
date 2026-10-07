@@ -2,6 +2,7 @@ import { Transform } from '@onceworlds/engine';
 import { NameTag, Shape2D, Text } from '@onceworlds/engine/modules';
 import { Ghost, SeatLook, StoneLook } from './components.js';
 import { STONE, TABLE } from './rules.js';
+import { SEAT_COLUMN, WIDE_ASPECT } from './view.js';
 import { COLORS, LAYERS, seatStyle } from './theme.js';
 
 // How things are drawn. Real stones, the title's and the lobby's local stones and the posters all go through `dressStone`, and every
@@ -101,10 +102,10 @@ export function seatSpot(index, count, aspect) {
   const inLine = side === 0 ? first : n - first;
   const k = side === 0 ? index : index - first;
   const spread = (span) => (inLine <= 1 ? 0 : -span / 2 + (span * k) / (inLine - 1));
-  if (aspect >= 1.05) {
+  if (aspect >= WIDE_ASPECT) {
     // Columns: left from the top down, right from the top down.
     const y = -spread(TABLE.radius * 1.5) + 0.6;
-    return { x: (side === 0 ? -1 : 1) * (TABLE.radius + 5.2), y, up: true };
+    return { x: (side === 0 ? -1 : 1) * SEAT_COLUMN, y, up: true };
   }
   // Rows: the first half under the table (nearest the thumbs), the rest above it.
   return { x: spread(TABLE.radius * 1.55), y: side === 0 ? -(TABLE.radius + 2.6) : TABLE.radius + 2.6, up: side === 1 };

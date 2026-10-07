@@ -6,7 +6,9 @@ import { LocalStone, Stone } from '../components.js';
 import { gameConfig } from '../game.config.js';
 import { seatSpot } from '../look.js';
 import { TABLE } from '../rules.js';
-import { firstTree, hudTree, promptTree } from '../ui.js';
+import { UI } from '@onceworlds/engine/modules';
+import { hudTree, keyboardInUse, promptTree } from '../ui.js';
+import { screenLayout } from '../view.js';
 import { clockOf, inputOf, phaseOf, stonesOn } from './helpers.js';
 import { fakeCanvas, strictBackend } from './fakeCanvas.js';
 
@@ -35,35 +37,86 @@ describe('store pictures', () => {
 
 describe('the HUD', () => {
   const base = { beat: 3, left: 2.2, fraction: 0.5, lean: { x: 0.08, y: -0.05 }, preview: { x: 0.05, y: -0.02 }, danger: 1.1, seat: 2, boulder: true, armed: false, aimed: false, hasAim: false };
+  const SIZES = [
+    [390, 844],
+    [844, 390],
+    [1280, 720],
+    [1920, 1080],
+    [1024, 768],
+    [2560, 1080],
+  ];
+  const overlaps = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+  const game = createGame({ ...gameConfig(), headless: true });
+  game.start();
+  const { ui } = servicesOf(game);
 
-  it('fits a phone held upright, in every phase, with every prompt', async () => {
-    const game = createGame({ ...gameConfig(), headless: true });
-    game.start();
-    const { ui } = servicesOf(game);
-    for (const phase of ['idle', 'aim', 'settle']) {
-      for (const extra of [{}, { armed: true }, { aimed: true, left: 1 }]) {
-        const state = { ...base, phase, ...extra };
-        const hud = ui.preview(hudTree(state), { width: 390, height: 844, touch: true, anchor: 'top' });
-        expect(hud.rect.x).toBeGreaterThanOrEqual(0);
-        expect(hud.rect.x + hud.rect.w).toBeLessThanOrEqual(390);
-        expect(hud.rect.y + hud.rect.h).toBeLessThan(170);
-        for (const [prompt, anchor] of [[promptTree(state), 'bottom'], [firstTree(state), 'center']]) {
-          if (!prompt) continue;
-          const { rect } = ui.preview(prompt, { width: 390, height: 844, touch: true, anchor });
-          expect(rect.x).toBeGreaterThanOrEqual(0);
-          expect(rect.x + rect.w).toBeLessThanOrEqual(390);
+  it('fits every screen in every phase, and never covers the table', () => {
+    for (const [width, height] of SIZES) {
+      for (const touch of [true, false]) {
+        for (const phase of ['idle', 'aim', 'settle']) {
+          for (const extra of [{}, { armed: true }, { boulder: false }, { aimed: true, left: 1 }]) {
+            const hud = ui.preview(hudTree({ ...base, phase, ...extra }, () => {}, !touch), { width, height, touch, anchor: 'top', offset: [0, 58] });
+            const layout = screenLayout(width, height, { scale: hud.scale });
+            expect(hud.rect.x).toBeGreaterThanOrEqual(0);
+            expect(hud.rect.x + hud.rect.w).toBeLessThanOrEqual(width);
+            expect(hud.rect.y + hud.rect.h).toBeLessThanOrEqual(layout.table.y + 4);
+          }
         }
       }
     }
   });
 
-  it('says what to do: tap before the first aim, the boulder when armed, AIM! when time is short', () => {
+  it('puts the prompts clear of the table on every screen: under the seats when tall, beside the table when wide', () => {
+    for (const [width, height] of SIZES) {
+      const layout = screenLayout(width, height);
+      expect(layout.prompt).toBe(width / height < 1.05 ? 'bottom' : width / height > 1.6 ? 'left' : layout.prompt);
+      for (const state of [{ ...base, phase: 'aim' }, { ...base, phase: 'aim', aimed: true, left: 1.2 }]) {
+        let rect;
+        let zones = [];
+        if (layout.prompt === 'left') {
+          const { scale } = ui.preview(UI.spacer(), { width, height, anchor: 'left' });
+          const room = Math.max(60, layout.side / scale - 16);
+          const seen = ui.preview(UI.column({ w: room, align: 'center' }, promptTree(state, { maxWidth: room })), { width, height, touch: true, anchor: 'top-left', offset: [8, 64] });
+          rect = seen.rect;
+          zones = seen.safe.zones;
+        } else {
+          rect = ui.preview(promptTree(state), { width, height, touch: true, anchor: 'bottom', offset: [0, 18], safe: false }).rect;
+        }
+        // Beside the table, it also keeps clear of the platform's buttons and the thumbs.
+        for (const zone of zones) expect(overlaps(rect, zone), `${width}x${height} prompt under ${JSON.stringify(zone)}`).toBe(false);
+        expect(overlaps(rect, layout.table), `${width}x${height} ${JSON.stringify(rect)} vs ${JSON.stringify(layout.table)}`).toBe(false);
+        expect(rect.x).toBeGreaterThanOrEqual(0);
+        expect(rect.x + rect.w).toBeLessThanOrEqual(width);
+        expect(rect.y + rect.h).toBeLessThanOrEqual(height);
+      }
+    }
+  });
+
+  it('makes the boulder a thumb-sized button on a touch screen, with its state on it, and names the key only for a keyboard', () => {
+    const tap = ui.preview(hudTree({ ...base, phase: 'aim' }, () => {}, false), { width: 390, height: 844, touch: true, anchor: 'top' });
+    const button = tap.hits.find((h) => JSON.stringify(h).includes('boulder'));
+    expect(button).toBeTruthy();
+    expect(button.rect.h / tap.scale).toBeGreaterThanOrEqual(56 / tap.scale - 0.5);
     const text = (tree) => JSON.stringify(tree);
-    expect(text(firstTree({ ...base, phase: 'aim' }))).toContain('TAP THE TABLE');
-    expect(firstTree({ ...base, phase: 'aim', aimed: true })).toBeNull();
-    expect(text(promptTree({ ...base, phase: 'aim', armed: true }))).toContain('BOULDER ARMED');
+    expect(text(hudTree({ ...base, phase: 'aim' }, () => {}, false))).toContain('"BOULDER"');
+    expect(text(hudTree({ ...base, phase: 'aim' }, () => {}, true))).toContain('BOULDER (B)');
+    expect(text(hudTree({ ...base, phase: 'aim', armed: true }, () => {}, true))).toContain('ARMED');
+    expect(text(hudTree({ ...base, phase: 'aim', boulder: false }, () => {}, true))).toContain('USED');
+    // Keys are named only where a keyboard is the input: never on touch, never before a mouse or a key has been used.
+    const input = (device, type) => ({ device, pointer: () => ({ type }) });
+    expect(keyboardInUse(input('touch', 'touch'), true, {})).toBe(false);
+    expect(keyboardInUse(input('keyboard', 'none'), false, { keyboard: false })).toBe(false);
+    expect(keyboardInUse(input('mouse', 'mouse'), false, {})).toBe(true);
+    expect(keyboardInUse(input('keyboard', 'none'), false, { keyboard: true })).toBe(true);
+    expect(keyboardInUse(input('pad', 'none'), false, { keyboard: true })).toBe(false);
+  });
+
+  it('says what to do: tap before the first aim, AIM! when time is short, nothing otherwise', () => {
+    const text = (tree) => JSON.stringify(tree);
+    expect(text(promptTree({ ...base, phase: 'aim' }))).toContain('TAP THE TABLE');
     expect(text(promptTree({ ...base, phase: 'aim', aimed: true, left: 1.5 }))).toContain('AIM!');
     expect(promptTree({ ...base, phase: 'aim', aimed: true, hasAim: true })).toBeNull();
+    expect(promptTree({ ...base, phase: 'settle' })).toBeNull();
   });
 });
 

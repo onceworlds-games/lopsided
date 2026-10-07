@@ -29,7 +29,8 @@ The round's clock is a pure function of the match clock (`clockAt` in `rules.js`
 - `systems/clock.js`: the round's clock. `systems/host.js`: drops and physics (host only). `systems/physics.js`: entities to plain stones and back.
 - `systems/sandbox.js`: the local table behind the title and in the lobby. `systems/aim.js`: taps and drags, the boulder, the aim marker.
 - `systems/looks.js`: stones dropping in and falling off, seats and their layout, the rim's glow, the camera. `systems/feedback.js`: sounds, shakes, "TIPPED BY", music.
-- `bots.js`: the bot brain. `ui.js`: the HUD (lean gauge, beats, the drop countdown) and the two-word prompts. `posters.js`: store art.
+- `bots.js`: the bot brain. `ui.js`: the HUD (lean gauge, beats, the drop countdown, the BOULDER button) and the prompts. `posters.js`: store art.
+- `view.js`: screen layout maths: the camera under the HUD, and where prompts go so they never cover the table (tested at phone, tablet and desktop sizes).
 - `theme.js`: palette, seat colours and symbols, particles, draw order.
 
 ## Change it
