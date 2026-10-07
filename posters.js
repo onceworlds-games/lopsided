@@ -1,5 +1,5 @@
 import { Transform, defineModule, quat } from '@onceworlds/engine';
-import { NameTag, Text, UI, feelOf, servicesOf } from '@onceworlds/engine/modules';
+import { NameTag, Shape2D, Text, feelOf, servicesOf } from '@onceworlds/engine/modules';
 import { Board, Hand, SeatLook, Stone } from './components.js';
 import { cameraLook, buildTable } from './table.js';
 import { dressSeat, pictureStone, seatSpot, spawnGhost } from './look.js';
@@ -21,7 +21,10 @@ function stage(p, lean, seats = []) {
     const spot = seatSpot(i, seats.length, 16 / 9);
     const seat = p.world.spawn([Transform({ position: [spot.x, spot.y, 0] }), Hand({ score, boulder })]);
     dressSeat(p.world, seat, { seat: i, id: `bot:${i + 1}`, name, you: name === 'You' });
-    const card = p.world.entity(seat.get(SeatLook).card);
+    const look = seat.get(SeatLook);
+    p.world.entity(look.score).get(Text).text = String(score);
+    if (!boulder) p.world.entity(look.boulder).get(Shape2D).visible = false;
+    const card = p.world.entity(look.card);
     if (card?.has(NameTag)) card.get(NameTag).offset.set(0, spot.up ? 2.3 : -2.3);
   });
 }
@@ -47,32 +50,36 @@ function crowd(p) {
 }
 
 function cover(p) {
-  camera(p, -7.5, 0.4, 28);
-  stage(p, [0.11, -0.09], [{ name: 'Mia', score: 21 }, { name: 'Rex', score: 9 }, { name: 'Juno', score: 17 }, { name: 'Ollie', score: 12 }, { name: 'Pip', score: 6, boulder: false }, { name: 'Sky', score: 14 }]);
+  camera(p, -8.6, 0, 25);
+  stage(p, [0.12, -0.1]);
   crowd(p);
   const feel = feelOf(p.world);
-  // Three going over the low edge right now.
-  for (const [r, deg, seat, gone] of [[10.6, -38, 2, 0.15], [11.2, -24, 0, 0.35], [10.4, -52, 1, 0.05]]) {
+  // Three going over the low edge right now, with their lost points.
+  for (const [r, deg, seat, gone] of [[10.5, -38, 2, 0.08], [11.0, -24, 0, 0.2], [10.3, -53, 1, 0.02]]) {
     const [x, y] = polar(r, deg);
     falling(p, x, y, seat, gone);
-    feel.particles.burst(SPILL, { x, y }, { direction: (deg * Math.PI) / 180, layer: LAYERS.fx });
+    feel.particles.burst(SPILL, { x, y }, { direction: (deg * Math.PI) / 180, count: 22, layer: LAYERS.fx });
   }
-  feel.particles.burst(THUD, { x: polar(7.6, 136)[0], y: polar(7.6, 136)[1] }, { count: 22, layer: LAYERS.fx });
-  // The name, tipped like the table.
-  const title = p.world.spawn([Transform({ position: [-21.5, 5.2, 0] }), Text({ text: TITLE, size: 5.4, weight: 800, color: COLORS.gold, outline: 0.5, outlineColor: COLORS.ink, layer: LAYERS.fx, z: 5 })]);
-  quat.fromAngleZ(title.get(Transform).rotation, -0.1);
-  p.world.spawn([Transform({ position: [-21.5, -0.6, 0] }), Text({ text: 'TIP THE TABLE', size: 2.2, weight: 800, color: COLORS.white, outline: 0.3, outlineColor: COLORS.ink, layer: LAYERS.fx, z: 5 })]);
-  p.world.spawn([Transform({ position: [-21.5, -3.6, 0] }), Text({ text: 'KEEP YOUR STONES ON', size: 1.6, weight: 700, color: seatStyle(1).fill, outline: 0.25, outlineColor: COLORS.ink, layer: LAYERS.fx, z: 5 })]);
+  feel.particles.burst(THUD, { x: polar(7.6, 136)[0], y: polar(7.6, 136)[1] }, { count: 26, layer: LAYERS.fx });
+  // The name, tipped like the table, and what you do.
+  const words = (text, x, y, size, color, angle = 0) => {
+    const e = p.world.spawn([Transform({ position: [x, y, 0] }), Text({ text, size, weight: 800, color, outline: size * 0.1, outlineColor: COLORS.ink, layer: LAYERS.fx, z: 5 })]);
+    quat.fromAngleZ(e.get(Transform).rotation, angle);
+  };
+  words(TITLE, -19.6, 3.6, 3.5, COLORS.gold, 0.1);
+  words('TIP THE TABLE.', -19.6, -1.3, 1.6, COLORS.white);
+  words('KEEP YOUR STONES ON.', -19.6, -3.8, 1.35, COLORS.white);
+  words('TIPPED BY MIA!', 6.6, -10.4, 1.5, seatStyle(4).fill, 0.12);
   p.settle(0.4);
 }
 
 function action(p) {
-  camera(p, 0, -1.2, 31);
+  camera(p, 0, 1.6, 30);
   stage(p, [0.07, -0.05], [{ name: 'You', score: 15 }, { name: 'Rex', score: 9 }, { name: 'Juno', score: 17 }, { name: 'Ollie', score: 12 }, { name: 'Pip', score: 6 }, { name: 'Sky', score: 14 }]);
   crowd(p);
   // Your aim for this beat, on the high side.
   const ghost = spawnGhost(p.world, 0);
-  ghost.get(Transform).position.set(...polar(8.4, 140), 0);
+  ghost.get(Transform).position.set(...polar(8.6, 196), 0);
   ghost.get(Transform).scale.set(1, 1, 1);
   p.settle(0.4);
 }
@@ -104,6 +111,5 @@ export const Posters = () =>
         () => hudTree({ phase: 'aim', beat: 3, left: 2.4, fraction: 0.6, lean: { x: 0.07, y: -0.05 }, preview: { x: 0.03, y: -0.02 }, danger: 0.9, seat: 0, boulder: true, armed: false, aimed: true, hasAim: true }),
         { anchor: 'top', offset: [0, 30], order: 9, safe: false, when: () => active() === 'action' },
       );
-      ui.view('poster-tip', () => UI.label('TIPPED BY MIA', { size: 64, color: seatStyle(4).fill, weight: 800, outline: true }), { anchor: 'top', offset: [210, 70], order: 9, safe: false, when: () => active() === 'cover' });
     },
   });

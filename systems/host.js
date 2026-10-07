@@ -1,4 +1,5 @@
 import { Transform, defineSystem } from '@onceworlds/engine';
+import { servicesOf } from '@onceworlds/engine/modules';
 import { Aim, Board, Hand, LocalStone, Seat, Stone } from '../components.js';
 import { boardOf, plainStones } from '../queries.js';
 import { BEATS, clampAim, dropTime, pointsAt, scoreTable, targetTilt, tipperOf } from '../rules.js';
@@ -20,8 +21,8 @@ export const HostDrop = defineSystem({
   stage: 'fixed',
   authority: 'host',
   queries: { seats: [Seat, Aim, Hand], stones: [Stone] },
-  run({ queries, world, flow }) {
-    if (flow.phase !== 'playing') return;
+  run({ queries, world, game, flow }) {
+    if (flow.phase !== 'playing' || servicesOf(game).poster?.active) return;
     const board = boardOf(world)?.get(Board);
     if (!board) return;
     const next = board.dropped + 1;
@@ -55,8 +56,8 @@ export const HostPhysics = defineSystem({
   stage: 'fixed',
   authority: 'host',
   queries: { stones: [Stone, Transform], seats: [Seat, Hand] },
-  run({ queries, world, flow, time }) {
-    if (flow.phase !== 'playing') return;
+  run({ queries, world, game, flow, time }) {
+    if (flow.phase !== 'playing' || servicesOf(game).poster?.active) return;
     const entity = boardOf(world);
     if (!entity) return;
     const board = entity.get(Board);

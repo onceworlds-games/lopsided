@@ -45,13 +45,16 @@ export function symbolPoints(name, r = 1) {
 
 const child = (world, parent, parts) => world.spawn([Transform(), ...parts], { parent });
 
-/** Give a stone (an entity with a Transform) its look: a puck of seat `seat`'s colour and symbol, bigger and darker for a boulder. */
-export function dressStone(world, entity, { seat = 0, heavy = false } = {}) {
+/**
+ * Give a stone (an entity with a Transform) its look: a puck of seat `seat`'s colour and symbol, bigger and darker for a boulder, and a
+ * gold edge when it is `mine` (so you always find your own stones on a crowded table).
+ */
+export function dressStone(world, entity, { seat = 0, heavy = false, mine = false } = {}) {
   const style = seatStyle(seat);
   const r = heavy ? STONE.boulderRadius : STONE.radius;
   const shadow = child(world, entity, [Shape2D({ shape: 'circle', radius: r * 1.02, fill: '#05041a66', layer: LAYERS.stoneShadows })]);
   shadow.get(Transform).position.set(0.14, -0.2, 0);
-  const body = child(world, entity, [Shape2D({ shape: 'circle', radius: r, fill: heavy ? style.edge : style.fill, stroke: COLORS.ink, strokeWidth: heavy ? 0.16 : 0.1, layer: LAYERS.stones })]);
+  const body = child(world, entity, [Shape2D({ shape: 'circle', radius: r, fill: heavy ? style.edge : style.fill, stroke: mine ? COLORS.gold : COLORS.ink, strokeWidth: mine ? 0.17 : heavy ? 0.16 : 0.1, layer: LAYERS.stones })]);
   child(world, body, [Shape2D({ shape: 'circle', radius: r * 0.74, fill: '#00000000', stroke: heavy ? style.fill : '#ffffff55', strokeWidth: heavy ? 0.16 : 0.06, layer: LAYERS.stones, z: 1 })]);
   child(world, body, [Shape2D({ shape: 'polygon', points: symbolPoints(style.symbol, r * (heavy ? 0.42 : 0.4)), fill: '#fffffff2', layer: LAYERS.stones, z: 2 })]);
   const gloss = child(world, body, [Shape2D({ shape: 'ellipse', size: [r * 0.62, r * 0.32], fill: '#ffffff59', layer: LAYERS.stones, z: 3 })]);

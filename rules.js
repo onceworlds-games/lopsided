@@ -20,7 +20,7 @@ export const TABLE = {
    * How much weight it takes to tip the table: tilt = (sum of mass x position) / stiffness, capped at `maxTilt`. A table for more players
    * is stiffer (see `stiffnessFor`), so eight players' stones rock it about as much as four players' do.
    */
-  stiffness: 300,
+  stiffness: 270,
   maxTilt: 0.24,
   /** The table swings toward its lean like a spring: a little wobble after every drop, settled in about a second. */
   spring: 22,

@@ -23,5 +23,11 @@
       "action": "Boulder (3x weight)"
     }
   ],
-  "help": "Each beat, tap the table where your next stone should land (drag to adjust). Everyone's stones drop at once. The table tips toward the weight and stones that slide off the edge are lost. At the end of a round, stones on the table score: rim 3, ring 2, middle 1. Once a round, arm your boulder: three times the weight."
+  "help": "Each beat, tap the table where your next stone should land (drag to adjust). Everyone's stones drop at once. The table tips toward the weight and stones that slide off the edge are lost. At the end of a round, stones on the table score: rim 3, ring 2, middle 1. Once a round, arm your boulder: three times the weight.",
+  "icon": "store/icon.png",
+  "thumbnails": [
+    "store/cover.png",
+    "store/action.png",
+    "store/play.png"
+  ]
 }

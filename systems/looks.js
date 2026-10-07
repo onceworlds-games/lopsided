@@ -1,8 +1,8 @@
 import { Transform, clamp, defineSystem, quat } from '@onceworlds/engine';
 import { Camera, FlowState, NameTag, Shape2D, Text, easeFn, servicesOf } from '@onceworlds/engine/modules';
-import { Board, Hand, LeanArrow, RimPiece, Seat, SeatLook, Stone, StoneLook, TableCamera, TableShadow } from '../components.js';
+import { Board, Hand, LeanArrow, LocalStone, RimPiece, Seat, SeatLook, Stone, StoneLook, TableCamera, TableShadow } from '../components.js';
 import { dressSeat, dressStone, seatSpot } from '../look.js';
-import { boardOf } from '../queries.js';
+import { boardOf, mySeat } from '../queries.js';
 import { TABLE, danger } from '../rules.js';
 import { COLORS, LAYERS, SPILL, THUD, seatStyle } from '../theme.js';
 import { FALL_SECONDS } from './physics.js';
@@ -29,8 +29,9 @@ export const DressStones = defineSystem({
   name: 'lopsided:dress-stones',
   stage: 'update',
   query: [Stone, Transform, { without: [StoneLook] }],
-  run({ query, world }) {
-    query.each((entity, stone) => void dressStone(world, entity, { seat: stone.seat, heavy: stone.heavy }));
+  run({ query, world, net }) {
+    const mine = mySeat(world, net?.me ?? 'me')?.get(Seat).index ?? -1;
+    query.each((entity, stone) => void dressStone(world, entity, { seat: stone.seat, heavy: stone.heavy, mine: stone.seat === mine && !entity.has(LocalStone) }));
   },
 });
 
@@ -42,6 +43,7 @@ export const StoneMotion = defineSystem({
   query: [Stone, StoneLook, Transform],
   run({ query, world, time, feel }) {
     const dt = time.dt;
+    const lean = leanOf(world);
     query.each((entity, stone, look, tr) => {
       const body = world.entity(look.body);
       const shadow = world.entity(look.shadow);
@@ -56,8 +58,9 @@ export const StoneMotion = defineSystem({
         if (stone.heavy) feel?.shake(0.25);
       }
       if (shadow) {
+        // The shadow falls a little toward the low side of the table, and far off while the stone is still in the air.
         const off = 0.14 + (1 - land) * 0.9;
-        shadow.get(Transform).position.set(off, -off * 1.4, 0);
+        shadow.get(Transform).position.set(off + lean.x * 3, -off * 1.4 + lean.y * 3, 0);
       }
       // Falling: over the edge it tips, shrinks and fades.
       if (stone.gone > 0) {
@@ -202,7 +205,7 @@ export const TableLook = defineSystem({
       // How low this piece of the rim is, from -1 (the high side) to 1 (the low side).
       const low = Math.cos(piece.angle) * ux + Math.sin(piece.angle) * uy;
       const heat = clamp(low * (risk - 0.35) * 1.6, 0, 1);
-      const pulse = risk >= 1 ? 0.5 + 0.5 * Math.sin(time.now * 14) : 1;
+      const pulse = risk >= 1 ? 0.8 + 0.2 * Math.sin(time.now * 14) : 1;
       const step = Math.round(heat * pulse * (RIM_STEPS.length - 1));
       paint(entity, shape.stroke, 'stroke', RIM_STEPS[step]);
       shape.strokeWidth = 0.5 + 0.25 * heat;
