@@ -1,64 +1,63 @@
-import { Transform } from '@onceworlds/engine';
-import { FlowState, Intent, defineBotSystem, seek, slips } from '@onceworlds/engine/modules';
-import { Floor, Motion, Runner, Status } from './components.js';
-import { HALF, RUNNER, nearestSafe } from './rules.js';
+import { hashString } from '@onceworlds/engine';
+import { defineBotSystem } from '@onceworlds/engine/modules';
+import { Aim, Board, Hand, RoundClock, Seat } from './components.js';
+import { boardOf, plainStones, seatsOf } from './queries.js';
+import { BEATS, clampAim } from './rules.js';
+import { STRATEGIES } from './strategy.js';
 
-// Bots play like people: they notice the called colour a moment late (their `reaction`), usually run to the nearest tile of it, sometimes
-// pick the second nearest or freeze, and use their dash only when they are running out of time. Each has its own skill. They are
-// host-owned runners, so their brains run on the host and move with it if the host changes.
-//
-//   think - now and then (every reaction time): look at the floor and choose where to stand.
-//   act   - every step: run there, and stop on arrival.
-//
-// The bot writes `Intent` exactly like the input system does for a player.
+// Bots play like people: each takes a moment into the beat to look at the table (sharper bots decide sooner), then aims with the same
+// reading of the table the balance tool tests (strategy.js). Each has a personality from its seat: most play `smart` (their own points,
+// minding the others a little), some are saboteurs (they go after the leader), and every decision can slip into a greedy or careless
+// drop (the bot's `mistake`). Their aim wobbles by their `aimNoise`, and a sharp bot sometimes changes its mind late in the beat.
+// Bots write `Aim` exactly like a player's tap does, so the host drops their stones the same way.
 
-const idle = () => ({ goal: null, dash: 0 });
+const STYLE_BY_SEAT = ['smart', 'saboteur', 'smart', 'smart', 'saboteur', 'smart', 'climber', 'smart'];
+const SLIPS = ['greedy', 'random', 'climber', 'turtle'];
+
+/** What the bot can see: the stones on the table, the lean, whose turn it is. */
+function viewFor(world, seat, hand, clock) {
+  const board = boardOf(world)?.get(Board);
+  return {
+    seat: seat.index,
+    stones: plainStones(world),
+    tilt: board ? { x: board.x, y: board.y } : { x: 0, y: 0 },
+    k: board?.k,
+    beat: clock.beat,
+    beats: BEATS.perRound,
+    boulder: hand.boulder,
+    others: Math.max(1, seatsOf(world).count() - 1),
+  };
+}
+
+function gauss(rng) {
+  return (rng.float(-1, 1) + rng.float(-1, 1) + rng.float(-1, 1)) / 1.5;
+}
 
 export const BotBrain = defineBotSystem({
-  name: 'party:bots',
-  query: [Runner, Status, Transform, Intent, Motion],
-  think(ctx, bot, _runner, status, tr, _intent, motion) {
-    const world = ctx.world;
-    if (world.resource(FlowState).phase !== 'playing' || status.out) {
-      bot.state = idle();
-      return;
+  name: 'lopsided:bots',
+  query: [Seat, Aim, Hand],
+  think(ctx, bot, seat, aim, hand) {
+    const clock = ctx.world.resource(RoundClock);
+    if (!clock.live || clock.phase !== 'aim') return;
+    const rng = ctx.rng;
+    const state = bot.state && typeof bot.state === 'object' ? bot.state : (bot.state = {});
+    if (state.beat !== clock.beat || state.key !== clock.key) {
+      // A new beat: when to decide (a moment to look; sharper bots are quicker, never after the lock).
+      Object.assign(state, { beat: clock.beat, key: clock.key, decided: aim.beat === clock.beat, changed: false, wait: Math.min(clock.length - 0.6, rng.float(0.5, 2.2) * (1.3 - bot.skill * 0.6)) });
     }
-    const floor = world.resource(Floor);
-    const here = tr.position;
-    if (floor.phase === 'show') {
-      // The nearest tile of the called colour; a bot that slips takes the second nearest (or, when it is hurrying, stays where it is).
-      const wrong = slips(bot, ctx.rng);
-      const goal = nearestSafe(here.x, here.y, floor.tiles, floor.target, wrong ? 1 : 0);
-      if (!goal || (wrong && floor.left < 1.2 && ctx.rng.chance(0.5))) {
-        bot.state = idle();
-        return;
-      }
-      // Dash only when walking would be too slow: more distance than the time left allows.
-      const needed = goal.distance / RUNNER.speed;
-      bot.state = { goal: { x: goal.x, y: goal.y }, dash: motion.cooldown <= 0 && needed > floor.left * 0.85 ? 1 : 0 };
-      return;
-    }
-    if (floor.phase === 'drop') {
-      // Stand still on the safe tile and wait for the floor to come back.
-      bot.state = { goal: bot.state?.goal ?? null, dash: 0 };
-      return;
-    }
-    // Between waves: spread out toward the middle, each bot to its own side so they don't all stand in one place.
-    const side = (ctx.entity.id % 5) - 2;
-    bot.state = { goal: { x: side * (HALF.x / 3) + ctx.rng.float(-1, 1), y: ctx.rng.float(-HALF.y / 2, HALF.y / 2) }, dash: 0 };
-  },
-  act(_ctx, bot, _runner, _status, tr, intent) {
-    const state = bot.state ?? idle();
-    const move = [0, 0];
-    let arrived = true;
-    if (state.goal) {
-      const distance = Math.hypot(state.goal.x - tr.position.x, state.goal.y - tr.position.y);
-      arrived = distance < 0.3;
-      if (!arrived) seek(move, [tr.position.x, tr.position.y], [state.goal.x, state.goal.y], Math.min(1, distance / 0.8));
-    }
-    intent.move.set(move[0], move[1]);
-    // A button is a held state: hold it for a few steps so the controller sees a press, then let go.
-    intent.dash = state.dash > 0;
-    state.dash = Math.max(0, state.dash - 0.2);
+    if (clock.left <= BEATS.lock + 0.05) return;
+    const late = state.decided && !state.changed && clock.left < 1.1 && rng.chance(0.25 * bot.skill);
+    if ((state.decided && !late) || clock.t < state.wait) return;
+
+    const style = rng.chance(bot.mistake) ? SLIPS[Math.floor(rng.float(0, SLIPS.length - 0.001))] : STYLE_BY_SEAT[hashString(seat.id) % STYLE_BY_SEAT.length];
+    const pick = STRATEGIES[style](viewFor(ctx.world, seat, hand, clock), rng);
+    const wobble = 0.6 + bot.aimNoise * 4;
+    const at = clampAim(pick.x + gauss(rng) * wobble, pick.y + gauss(rng) * wobble);
+    aim.x = at.x;
+    aim.y = at.y;
+    aim.heavy = !!pick.heavy && hand.boulder;
+    aim.beat = clock.beat;
+    if (state.decided) state.changed = true;
+    state.decided = true;
   },
 });

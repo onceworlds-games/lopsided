@@ -1,50 +1,110 @@
 import { defineComponent, defineResource, t } from '@onceworlds/engine';
-import { COLOR_COUNT, FLOOR } from './rules.js';
 
 // Data only. What every page must agree on is replicated (`net`); the rest each page keeps for itself.
+//
+//   Seat + Aim     one entity per player, owned by that player's page (the host's for bots): who it is and where its next stone goes
+//   Hand           on the same entity, written by the host only: the boulder still in hand, the live score, stones lost
+//   Board          one host-owned entity per round: the table's lean and what the host has done (which beat it dropped, who tipped it)
+//   Stone          host-owned, one per stone on the table (and for a moment after it falls)
 
-/** Who a runner is. The page that plays it writes it (and its position). */
-export const Runner = defineComponent('Runner', { id: t.playerId(), color: t.u8() }, { net: { replicate: true } });
+/** Who sits where. `index` is the seat's number in the match (its colour, symbol and place round the table). */
+export const Seat = defineComponent('Seat', { id: t.playerId(), index: t.u8() }, { net: { replicate: true } });
 
-/** Whether a runner is still in. Only the host writes it, so nobody can stay in by lying about where they stood. */
-export const Status = defineComponent('Status', { out: t.bool(false), outAt: t.f32(0, { step: 0.1 }) }, { net: { replicate: true, owner: 'host' } });
+/** Where this seat's next stone lands, for beat `beat` (an aim for an earlier beat is stale). Written by the seat's own page. */
+export const Aim = defineComponent(
+  'Aim',
+  { x: t.f32(0, { step: 0.02 }), y: t.f32(0, { step: 0.02 }), heavy: t.bool(false), beat: t.i32(-1) },
+  { net: { replicate: true } },
+);
+
+/** The host's word about a seat: nobody can give themselves their boulder back or a score. */
+export const Hand = defineComponent('Hand', { boulder: t.bool(true), score: t.i32(0), lost: t.u8(0) }, { net: { replicate: true, owner: 'host' } });
+
+/** The table: its lean (downhill), how fast the lean changes, its stiffness, and the host's bookkeeping. */
+export const Board = defineComponent(
+  'Board',
+  {
+    x: t.f32(0, { step: 0.0005 }),
+    y: t.f32(0, { step: 0.0005 }),
+    vx: t.f32(0, { step: 0.0005 }),
+    vy: t.f32(0, { step: 0.0005 }),
+    k: t.f32(300, { step: 0.5 }),
+    /** The last beat whose stones have dropped (-1: none yet). */
+    dropped: t.i32(-1),
+    /** Whose drop tipped the table most in beat `tipBeat` (a seat number, -1 none), and how many rival stones fell after it. */
+    tipBeat: t.i32(-1),
+    tipper: t.i32(-1),
+    tipFell: t.u8(0),
+    /** Every stone that has fallen this round, and the beat of the last one. */
+    fell: t.u16(0),
+  },
+  { net: { replicate: true, owner: 'host' } },
+);
+
+/** A stone on the table. `gone` counts seconds since it went over the edge (0 while it is on the table). */
+export const Stone = defineComponent(
+  'Stone',
+  {
+    seat: t.u8(),
+    heavy: t.bool(false),
+    beat: t.u8(),
+    vx: t.f32(0, { step: 0.01 }),
+    vy: t.f32(0, { step: 0.01 }),
+    sliding: t.bool(false),
+    gone: t.f32(0, { step: 0.05 }),
+  },
+  { net: { replicate: true, owner: 'host' } },
+);
 
 // ---- Kept on one page only (never sent).
 
-/** Running and dashing, on the page that simulates the runner. */
-export const Motion = defineComponent('Motion', { vx: t.f32(), vy: t.f32(), dashLeft: t.f32(), cooldown: t.f32(), dashHeld: t.bool(), dashX: t.f32(), dashY: t.f32() });
+/** How a stone is drawn here, and what this page has already shown of it. */
+export const StoneLook = defineComponent('StoneLook', { body: t.entity(), shadow: t.entity(), age: t.f32(0), fallen: t.bool(false), slid: t.bool(false) });
 
-/** How a runner is drawn, and what this page already showed for it. */
-export const Look = defineComponent('Look', { out: t.bool(), figure: t.entity(), shadow: t.entity() });
+/** How a seat is drawn here. */
+export const SeatLook = defineComponent('SeatLook', { card: t.entity(), puck: t.entity(), score: t.entity(), boulder: t.entity(), shown: t.i32(-1), lost: t.u8(0), layout: t.string(24) });
 
-/** A square of the floor and the shape drawn on it. */
-export const Tile = defineComponent('Tile', { col: t.u8(), row: t.u8(), symbol: t.entity(), color: t.u8(255) });
+/** This page's own aim marker. */
+export const Ghost = defineComponent('Ghost', { ring: t.entity(), cross: t.entity() });
 
-/** Title-screen runners that follow a script. */
-export const Demo = defineComponent('Demo', { phase: t.f32(), speed: t.f32(1) });
+/** Pieces of the table that move with its lean. */
+export const RimPiece = defineComponent('RimPiece', { angle: t.f32() });
+export const TableShadow = defineComponent('TableShadow');
+export const LeanArrow = defineComponent('LeanArrow', { index: t.u8() });
+export const TableCamera = defineComponent('TableCamera');
 
-export const FloorCamera = defineComponent('FloorCamera');
+/** A stone of the local table behind the title and in the lobby (not networked). */
+export const LocalStone = defineComponent('LocalStone', { id: t.u16() });
 
-/** The floor right now, worked out on every page from the round's clock (or a looping demo outside a round). */
-export const Floor = defineResource('Floor', {
+/** What this page has already played of the round (each sound or callout once), and its own aiming state. */
+export const Beat = defineResource('Beat', {
   key: t.string(80),
-  wave: t.u16(),
-  phase: t.enum(['idle', 'show', 'drop', 'rest'], 'idle'),
-  t: t.f32(),
-  left: t.f32(),
-  target: t.u8(),
-  colors: t.u8(COLOR_COUNT),
-  /** True while a round is being played (the floor decides who falls), false in the demo behind the title and the lobby. */
-  live: t.bool(false),
-  tiles: t.list(t.u8(), FLOOR.cols * FLOOR.rows),
-  /** The floor of the wave before, so tiles that fell can grow back while the safe ones are recoloured. */
-  prev: t.list(t.u8(), FLOOR.cols * FLOOR.rows),
-  prevTarget: t.u8(),
-  hasPrev: t.bool(false),
+  dropped: t.i32(-1),
+  fell: t.u16(0),
+  tick: t.i32(-1),
+  callout: t.i32(-1),
+  /** The boulder is armed for this page's next drop. */
+  armed: t.bool(false),
+  /** This page has aimed at least once this match (the "tap the table" hint goes away). */
+  aimed: t.bool(false),
+  /** The pointer went down on the table and is still down: dragging moves the aim. */
+  dragging: t.bool(false),
 });
 
-/** What this page has already shown of the floor (a tick, a drop), so each is shown once. */
-export const Beat = defineResource('Beat', { id: t.string(100), phase: t.string(8), tick: t.i32(-1) });
+/** The latest "TIPPED BY ..." to show over the table: text, colour and when it began (the world's clock). */
+export const Callout = defineResource('Callout', { text: t.string(60), sub: t.string(40), color: t.string(10), at: t.f32(-99) });
 
-/** The host's note of which drop it has judged (so a drop is judged once, even if the host changes). */
-export const Judged = defineResource('Judged', { key: t.string(100) });
+/**
+ * Where the round is, worked out on every page from the match clock (systems/clock.js): `live` while a round is being played, the
+ * phase of the round (`idle` before the first beat, `aim`, `settle` after the last drop, `done`), the beat, seconds into and left of it.
+ */
+export const RoundClock = defineResource('RoundClock', {
+  live: t.bool(false),
+  key: t.string(80),
+  phase: t.enum(['none', 'idle', 'aim', 'settle', 'done'], 'none'),
+  beat: t.u8(0),
+  t: t.f32(0),
+  left: t.f32(0),
+  length: t.f32(0),
+  elapsed: t.f32(0),
+});

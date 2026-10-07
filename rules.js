@@ -1,152 +1,332 @@
-// The numbers and the maths of the game, as plain functions with no engine in them. Change them here and the tests show what happened.
+// The numbers and the maths of Lopsided, as plain functions with no engine in them. The host's systems, the bots, the tests and the
+// balance tool (tools/balance.mjs) all run exactly this code.
 //
-// The game is "stand on the colour": the floor is a grid of coloured tiles. A colour (and its shape) is called, everyone runs onto it,
-// and when the time is up every other tile drops away. Whoever is standing on a dropped tile is out and floats on as a ghost. Each wave
-// is faster and calls for fewer tiles than the one before.
+// The game: a round table balanced on one point. Each beat every player drops one stone at the same moment. The table tips toward the
+// weight (the sum of every stone's mass times where it lies), and once the slope under a stone beats its grip it slides. Past the rim it
+// falls and is gone. When a round ends, what is still on the table scores by ring: middle 1, inner ring 2, rim 3.
 //
-// Everything about the floor is a pure function of the round and the seconds since it began, so every page works out the same floor
-// with no messages, and a page that reloads or becomes the host simply carries on.
+// Space: the table's middle is (0, 0), y up, its radius is TABLE.radius. The tilt is a vector pointing downhill (toward the low side).
 
-export const FLOOR = { cols: 8, rows: 6, tile: 2 };
-export const HALF = { x: (FLOOR.cols * FLOOR.tile) / 2, y: (FLOOR.rows * FLOOR.tile) / 2 };
-
-export const RUNNER = {
-  radius: 0.45,
-  speed: 5.6,
-  accel: 42,
-  dashSpeed: 12.5,
-  dashTime: 0.18,
-  dashCooldown: 1.5,
+export const TABLE = {
+  radius: 10,
+  /** The table is gently domed: an extra outward slope of `dome` per unit from the middle (0.06 at the rim). Rim stones go first. */
+  dome: 0.006,
+  /** A resting stone starts to slide when the slope under it is steeper than this. */
+  grip: 0.15,
+  /** A sliding stone slows by this (kinetic friction, a little lower than the grip: once going, a slide carries). */
+  drag: 0.13,
+  gravity: 30,
+  /**
+   * How much weight it takes to tip the table: tilt = (sum of mass x position) / stiffness, capped at `maxTilt`. A table for more players
+   * is stiffer (see `stiffnessFor`), so eight players' stones rock it about as much as four players' do.
+   */
+  stiffness: 300,
+  maxTilt: 0.24,
+  /** The table swings toward its lean like a spring: a little wobble after every drop, settled in about a second. */
+  spring: 22,
+  damping: 6.5,
 };
 
-export const WAVE = {
-  /** Seconds the floor shows itself before the first wave of a round. */
-  grace: 1.4,
-  /** How long the other tiles stay gone, and how long the floor takes to come back. */
-  drop: 1.3,
-  rest: 1.0,
-  /** The tiles fall in the first moments of the drop; the referee looks at who is standing where after this long. */
-  fall: 0.3,
-  judgeAfter: 0.35,
-  /** A runner whose middle is this close to a safe tile counts as on it (the host sees positions a moment late). */
-  margin: 0.35,
+export const STONE = { radius: 0.72, mass: 1, boulderRadius: 1.05, boulderMass: 3 };
+
+/** Rings, from the middle out: within `upTo` of the radius a stone scores `points`. */
+export const RINGS = [
+  { upTo: 0.4, points: 1 },
+  { upTo: 0.72, points: 2 },
+  { upTo: 1, points: 3 },
+];
+
+export const BEATS = {
+  /** Seconds to look at the empty table before the first beat. */
+  grace: 2.2,
+  perRound: 8,
+  /** Seconds to aim: the first beat is the longest, then they speed up. */
+  first: 4.0,
+  last: 2.6,
+  /** Aims are locked this long before a drop, so what you see is what drops even over a slow network. */
+  lock: 0.18,
+  /** After the last drop, the table settles for this long before the round is scored. */
+  settle: 4.0,
 };
 
-export const ROUND_SECONDS = 100;
-export const SYMBOLS = ['circle', 'triangle', 'square', 'diamond', 'star'];
-export const COLOR_COUNT = 5;
-
-// ---------------------------------------------------------------- the ramp
-
-/** Seconds the colour is shown before the drop: shorter every wave and every round. */
-export const showTime = (wave, round = 1) => Math.max(0.8, 3.0 - 0.35 * wave - 0.3 * (round - 1));
-
-/** How many colours are on the floor: more later, so a colour is harder to find at a glance. */
-export const colorsFor = (wave, round = 1) => Math.min(COLOR_COUNT, 3 + Math.floor(wave / 2) + (round - 1));
-
-/** How many tiles are of the called colour: fewer later, so the safe place is further away. */
-export const safeCount = (wave, round = 1) => Math.max(2, Math.round(16 - 2 * wave - 2 * (round - 1)));
+export const MAX_SEATS = 8;
 
 // ---------------------------------------------------------------- the clock
 
-const cycleOf = (wave, round) => showTime(wave, round) + WAVE.drop + WAVE.rest;
+/** Seconds of aiming in beat `i` (0-based). */
+export const beatLength = (i) => BEATS.first + ((BEATS.last - BEATS.first) * Math.min(i, BEATS.perRound - 1)) / (BEATS.perRound - 1);
+
+/** Seconds into the round when beat `i`'s stones drop. */
+export function dropTime(i) {
+  let t = BEATS.grace;
+  for (let j = 0; j <= i; j++) t += beatLength(j);
+  return t;
+}
+
+/** When the round is scored: the last drop plus the settle. */
+export const roundLength = () => dropTime(BEATS.perRound - 1) + BEATS.settle;
 
 /**
- * Where the floor is `elapsed` seconds into a round: which wave, which phase of it ('idle' before the first wave, then 'show', 'drop'
- * and 'rest'), seconds into the phase (`t`) and left of it (`left`).
+ * Where a round is, `elapsed` seconds in: `idle` before the first beat, `aim` during a beat (`beat` is its number, `left` the seconds to
+ * its drop), `settle` after the last drop and `done` when it is scored. `t` is seconds into the phase.
  */
-export function floorAt(elapsed, round = 1) {
-  if (elapsed < WAVE.grace) return { wave: 0, phase: 'idle', t: Math.max(0, elapsed), left: WAVE.grace - Math.max(0, elapsed) };
-  let at = elapsed - WAVE.grace;
-  let wave = 0;
-  while (at >= cycleOf(wave, round)) {
-    at -= cycleOf(wave, round);
-    wave++;
+export function clockAt(elapsed) {
+  if (elapsed < BEATS.grace) return { phase: 'idle', beat: 0, t: Math.max(0, elapsed), left: BEATS.grace - Math.max(0, elapsed), length: BEATS.grace };
+  let start = BEATS.grace;
+  for (let i = 0; i < BEATS.perRound; i++) {
+    const length = beatLength(i);
+    if (elapsed < start + length) return { phase: 'aim', beat: i, t: elapsed - start, left: start + length - elapsed, length };
+    start += length;
   }
-  const show = showTime(wave, round);
-  if (at < show) return { wave, phase: 'show', t: at, left: show - at };
-  if (at < show + WAVE.drop) return { wave, phase: 'drop', t: at - show, left: show + WAVE.drop - at };
-  return { wave, phase: 'rest', t: at - show - WAVE.drop, left: cycleOf(wave, round) - at };
+  const after = elapsed - start;
+  if (after < BEATS.settle) return { phase: 'settle', beat: BEATS.perRound, t: after, left: BEATS.settle - after, length: BEATS.settle };
+  return { phase: 'done', beat: BEATS.perRound, t: after - BEATS.settle, left: 0, length: 0 };
+}
+
+// ---------------------------------------------------------------- scoring
+
+/** Points for a stone whose middle is at (x, y): 0 off the table. */
+export function pointsAt(x, y) {
+  const d = Math.hypot(x, y) / TABLE.radius;
+  for (const ring of RINGS) if (d <= ring.upTo) return ring.points;
+  return 0;
+}
+
+/** Each seat's points for the stones on the table: `{ [seat]: points }` (every seat in `seats` gets an entry). */
+export function scoreTable(stones, seats = []) {
+  const score = {};
+  for (const seat of seats) score[seat] = 0;
+  for (const s of stones) if (!s.gone) score[s.seat] = (score[s.seat] ?? 0) + pointsAt(s.x, s.y);
+  return score;
+}
+
+// ---------------------------------------------------------------- the tilt
+
+/** The stiffness of the table for a match of `seats` players: stones pile up with the number of players, the lean with its square root. */
+export const stiffnessFor = (seats) => TABLE.stiffness * Math.sqrt(Math.max(2, Math.min(MAX_SEATS, seats || 4)) / 4);
+
+/** Where the weight wants the table to lean: { x, y } downhill, capped at `maxTilt`. `k` is the table's stiffness. */
+export function targetTilt(stones, extra = null, k = TABLE.stiffness) {
+  let qx = 0;
+  let qy = 0;
+  for (const s of stones) {
+    if (s.gone) continue;
+    qx += s.m * s.x;
+    qy += s.m * s.y;
+  }
+  if (extra) {
+    qx += extra.m * extra.x;
+    qy += extra.m * extra.y;
+  }
+  return capTilt(qx / k, qy / k);
+}
+
+export function capTilt(x, y) {
+  const length = Math.hypot(x, y);
+  if (length <= TABLE.maxTilt) return { x, y };
+  const k = TABLE.maxTilt / length;
+  return { x: x * k, y: y * k };
+}
+
+/** The slope under a point on a table leaning by `tilt`: the lean plus the dome. */
+export const slopeAt = (tilt, x, y) => ({ x: tilt.x + TABLE.dome * x, y: tilt.y + TABLE.dome * y });
+
+/** How close the table is to sliding stones at the rim (0 level, 1 the low rim's stones are about to go, more is sliding). */
+export const danger = (tilt) => Math.hypot(tilt.x, tilt.y) / (TABLE.grip - TABLE.dome * TABLE.radius);
+
+// ---------------------------------------------------------------- the physics
+
+/** A stone as the physics sees it. `seat` is the player's seat number; `beat` the beat it dropped in. */
+export function makeStone(seat, x, y, heavy = false, beat = 0) {
+  const at = clampAim(x, y);
+  return {
+    seat,
+    beat,
+    heavy,
+    x: at.x,
+    y: at.y,
+    vx: 0,
+    vy: 0,
+    m: heavy ? STONE.boulderMass : STONE.mass,
+    r: heavy ? STONE.boulderRadius : STONE.radius,
+    sliding: false,
+    gone: false,
+  };
 }
 
 /**
- * The colour called in a wave and the colour of each tile (row by row), from a seeded random stream: the same on every page.
- * `safeCount` of the tiles are the called colour; the rest are shared out among the other colours.
+ * One fixed step of the table and its stones. `table` is { x, y, vx, vy, k } (the lean, how fast it changes, the stiffness); `stones`
+ * are plain objects (makeStone). Changes them in place and returns the stones that fell off the edge in this step.
  */
-export function makeFloor(rng, wave, round = 1) {
-  const colors = colorsFor(wave, round);
-  const target = rng.below(colors);
-  const total = FLOOR.cols * FLOOR.rows;
-  const safe = Math.min(total - 1, safeCount(wave, round));
-  const tiles = new Array(total).fill(target);
-  const others = [];
-  for (let i = 0; i < total - safe; i++) others.push((target + 1 + (i % (colors - 1))) % colors);
-  const order = Array.from({ length: total }, (_, i) => i);
-  rng.shuffle(order);
-  order.slice(safe).forEach((tile, i) => void (tiles[tile] = others[i]));
-  return { target, colors, tiles };
-}
+export function stepTable(table, stones, dt) {
+  // The table swings toward where the weight wants it.
+  const want = targetTilt(stones, null, table.k ?? TABLE.stiffness);
+  table.vx += (TABLE.spring * (want.x - table.x) - TABLE.damping * table.vx) * dt;
+  table.vy += (TABLE.spring * (want.y - table.y) - TABLE.damping * table.vy) * dt;
+  table.x += table.vx * dt;
+  table.y += table.vy * dt;
+  const lean = capTilt(table.x, table.y);
+  table.x = lean.x;
+  table.y = lean.y;
 
-// ---------------------------------------------------------------- the floor in space
+  // Stones slide when the slope beats their grip, and slow by the drag.
+  const g = TABLE.gravity;
+  for (const s of stones) {
+    if (s.gone) continue;
+    const slope = slopeAt(table, s.x, s.y);
+    const steep = Math.hypot(slope.x, slope.y);
+    if (!s.sliding && steep > TABLE.grip) s.sliding = true;
+    if (!s.sliding) continue;
+    s.vx += g * slope.x * dt;
+    s.vy += g * slope.y * dt;
+    const speed = Math.hypot(s.vx, s.vy);
+    const slow = TABLE.drag * g * dt;
+    if (speed <= slow) {
+      s.vx = 0;
+      s.vy = 0;
+      if (steep <= TABLE.grip) s.sliding = false;
+    } else {
+      s.vx *= (speed - slow) / speed;
+      s.vy *= (speed - slow) / speed;
+    }
+    s.x += s.vx * dt;
+    s.y += s.vy * dt;
+  }
 
-export const tileCenter = (col, row) => ({ x: -HALF.x + FLOOR.tile * (col + 0.5), y: -HALF.y + FLOOR.tile * (row + 0.5) });
+  collide(stones);
 
-/** The tile under a point, or null off the edge. */
-export function tileAt(x, y) {
-  const col = Math.floor((x + HALF.x) / FLOOR.tile);
-  const row = Math.floor((y + HALF.y) / FLOOR.tile);
-  return col < 0 || row < 0 || col >= FLOOR.cols || row >= FLOOR.rows ? null : { col, row, index: row * FLOOR.cols + col };
-}
-
-/** How far a point is from a tile's square (0 inside it). */
-export function distanceToTile(x, y, col, row) {
-  const c = tileCenter(col, row);
-  const dx = Math.max(0, Math.abs(x - c.x) - FLOOR.tile / 2);
-  const dy = Math.max(0, Math.abs(y - c.y) - FLOOR.tile / 2);
-  return Math.hypot(dx, dy);
-}
-
-/** Is a runner at (x, y) standing on the called colour? Close enough to the edge of a safe tile counts. */
-export function isSafe(x, y, tiles, target) {
-  const here = tileAt(x, y);
-  if (here && tiles[here.index] === target) return true;
-  const col = Math.floor((x + HALF.x) / FLOOR.tile);
-  const row = Math.floor((y + HALF.y) / FLOOR.tile);
-  for (let c = col - 1; c <= col + 1; c++) {
-    for (let r = row - 1; r <= row + 1; r++) {
-      if (c < 0 || r < 0 || c >= FLOOR.cols || r >= FLOOR.rows) continue;
-      if (tiles[r * FLOOR.cols + c] === target && distanceToTile(x, y, c, r) <= WAVE.margin) return true;
+  const fell = [];
+  for (const s of stones) {
+    if (s.gone) continue;
+    if (Math.hypot(s.x, s.y) > TABLE.radius) {
+      s.gone = true;
+      fell.push(s);
     }
   }
-  return false;
+  return fell;
 }
 
-/** The called-colour tile nearest to a point: `{ col, row, x, y, distance }`, or null if there is none. */
-export function nearestSafe(x, y, tiles, target, skip = 0) {
-  const found = [];
-  tiles.forEach((color, index) => {
-    if (color !== target) return;
-    const col = index % FLOOR.cols;
-    const row = Math.floor(index / FLOOR.cols);
-    const c = tileCenter(col, row);
-    found.push({ col, row, x: c.x, y: c.y, distance: Math.hypot(c.x - x, c.y - y) });
-  });
-  found.sort((a, b) => a.distance - b.distance);
-  return found[Math.min(skip, found.length - 1)] ?? null;
+/** Stones never overlap: push each pair apart by their masses, and share their speed along the push (a soft, heavy knock). */
+export function collide(stones) {
+  for (let pass = 0; pass < 2; pass++) {
+    for (let i = 0; i < stones.length; i++) {
+      const a = stones[i];
+      if (a.gone) continue;
+      for (let j = i + 1; j < stones.length; j++) {
+        const b = stones[j];
+        if (b.gone) continue;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const min = a.r + b.r;
+        const d2 = dx * dx + dy * dy;
+        if (d2 >= min * min) continue;
+        let d = Math.sqrt(d2);
+        let nx = 1;
+        let ny = 0;
+        if (d > 1e-6) {
+          nx = dx / d;
+          ny = dy / d;
+        } else {
+          // Exactly on top of each other: push apart along a fixed direction from their seats (the same on every run).
+          const angle = (a.seat * 2.4 + b.seat * 1.3 + i * 0.7) % (Math.PI * 2);
+          nx = Math.cos(angle);
+          ny = Math.sin(angle);
+          d = 0;
+        }
+        const overlap = min - d;
+        const total = a.m + b.m;
+        a.x -= nx * overlap * (b.m / total);
+        a.y -= ny * overlap * (b.m / total);
+        b.x += nx * overlap * (a.m / total);
+        b.y += ny * overlap * (a.m / total);
+        // Closing speed along the push: share it (mostly inelastic), and a knocked stone starts to slide.
+        const closing = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
+        if (closing > 0) {
+          const impulse = (1.25 * closing) / total;
+          a.vx -= impulse * b.m * nx;
+          a.vy -= impulse * b.m * ny;
+          b.vx += impulse * a.m * nx;
+          b.vy += impulse * a.m * ny;
+          if (closing > 0.4) {
+            a.sliding = true;
+            b.sliding = true;
+          }
+        }
+      }
+    }
+  }
 }
 
-// ---------------------------------------------------------------- winning
+/** True when nothing on the table moves and the table has stopped swinging. */
+export function settled(table, stones) {
+  if (Math.hypot(table.vx, table.vy) > 0.004) return false;
+  for (const s of stones) if (!s.gone && s.sliding && Math.hypot(s.vx, s.vy) > 0.05) return false;
+  return true;
+}
+
+// ---------------------------------------------------------------- who tipped it
 
 /**
- * Who falls on a drop: the runners not on the called colour. If that would be everybody still in, nobody falls (the wave is wasted and
- * the next is faster), so a round always ends with a winner or at the time limit.
+ * Of the stones that dropped together in one beat, whose pushed the table hardest toward where it now leans: the seat to credit
+ * ("TIPPED BY ...") when stones slide off soon after, or -1 when no drop leaned that way.
  */
-export function whoFalls(standing) {
-  const falling = standing.filter((runner) => !runner.safe).map((runner) => runner.id);
-  return falling.length >= standing.length ? [] : falling;
+export function tipperOf(dropped, tilt) {
+  const length = Math.hypot(tilt.x, tilt.y);
+  if (length < 1e-6) return -1;
+  const ux = tilt.x / length;
+  const uy = tilt.y / length;
+  let best = -1;
+  let most = 0.5;
+  for (const s of dropped) {
+    const push = s.m * (s.x * ux + s.y * uy);
+    if (push > most) {
+      most = push;
+      best = s.seat;
+    }
+  }
+  return best;
 }
 
-/** How well a runner did in a round (higher is better): anyone still in beats anyone out, and the later out the better. */
-export const roundScore = ({ out, outAt }) => (out ? Math.max(0, outAt) : 10000);
+// ---------------------------------------------------------------- seats
 
-export const roundIsOver = (alive, seats) => seats >= 2 && alive <= 1;
+/** Where seat `index` of `count` sits around the table (outside the rim), as an angle and a point. */
+export function seatPlace(index, count, distance = TABLE.radius + 2.2) {
+  const n = Math.max(2, count);
+  const angle = -Math.PI / 2 + (index / n) * Math.PI * 2;
+  return { angle, x: Math.cos(angle) * distance, y: Math.sin(angle) * distance };
+}
+
+/** Clamp an aim to the table (a stone's middle may be anywhere on it). */
+export function clampAim(x, y) {
+  const r = TABLE.radius - 0.1;
+  const d = Math.hypot(x, y);
+  if (!Number.isFinite(d)) return { x: 0, y: 0 };
+  return d > r ? { x: (x * r) / d, y: (y * r) / d } : { x, y };
+}
+
+// ---------------------------------------------------------------- reading the table (bots, and the aim preview)
+
+/**
+ * How likely a stone at (x, y) is to be lost if the table leant by `tilt`: most for one whose slope beats its grip and points outward,
+ * less for one that would slide inward (it may cross the table), 0 for one that holds.
+ */
+export function lossRisk(tilt, x, y) {
+  const slope = slopeAt(tilt, x, y);
+  const steep = Math.hypot(slope.x, slope.y);
+  if (steep <= TABLE.grip) return 0;
+  const d = Math.hypot(x, y) || 1;
+  const outward = (slope.x * x + slope.y * y) / (steep * d);
+  // How far past the grip (a hard lean loses more), and whether it slides out or across.
+  const hard = Math.min(1, (steep - TABLE.grip) / 0.06 + 0.35);
+  return outward > 0.2 ? hard : outward > -0.5 ? hard * 0.45 : hard * 0.15;
+}
+
+/** The expected points of a set of stones after a lean, seat by seat. */
+export function expectedScores(stones, tilt) {
+  const score = {};
+  for (const s of stones) {
+    if (s.gone) continue;
+    score[s.seat] = (score[s.seat] ?? 0) + pointsAt(s.x, s.y) * (1 - lossRisk(tilt, s.x, s.y));
+  }
+  return score;
+}

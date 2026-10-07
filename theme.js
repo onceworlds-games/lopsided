@@ -1,40 +1,49 @@
 import { defineRenderLayers } from '@onceworlds/engine/modules';
 
-// How the game looks: a game show on a raft in a pool, on a sunny afternoon. Glossy coloured tiles on a white deck, a lane rope of floats
-// round it, bright water that shows wherever a tile drops, and every player as their own avatar. Each floor colour also has its own shape
-// and name, so it can be told apart without seeing colour: a runner finds "the blue circle", not only "blue".
+// How the game looks: a board game on a wobbly round table, late at night. A warm cream table with three rings (1, 2, 3 points) and a
+// brass rim, on a deep indigo floor. Every player's stones are glossy pucks in their own colour with their own white symbol, so a stone
+// is told apart without seeing colour. Danger is red: the low side of the rim glows when stones there are about to go.
 
-export const TITLE = 'STAND ON THE COLOR';
+export const TITLE = 'LOPSIDED';
 export const FONT = 'Sora';
 
 export const COLORS = {
-  water: '#3cc8e6',
-  /** The water seen through the hole a tile leaves. */
-  deep: '#1fa2cf',
-  deck: '#fff6e4',
-  float: '#ff4d5e',
-  ink: '#1b1f3a',
-  shadow: '#1b1f3a55',
+  floor: '#15133a',
+  floorGlow: '#262463',
+  ink: '#1b1533',
+  table: '#f6ead0',
+  ringMiddle: '#fff6e2',
+  ringInner: '#f3dfba',
+  ringRim: '#ebc88f',
+  ringLine: '#b98a4e',
+  brass: '#e2a93b',
+  brassDark: '#9c6a1c',
+  shadow: '#05041acc',
   gold: '#ffd23f',
-  bad: '#ff4d5e',
+  danger: '#ff4d3d',
+  safe: '#5ee38a',
+  white: '#ffffff',
 };
 
-/** The floor's colours, in the order the rules number them: blue, red, green, yellow, purple. */
-export const TILE_COLORS = [
-  { name: 'BLUE', fill: '#3b82f6', edge: '#1d4ed8' },
-  { name: 'RED', fill: '#ef4444', edge: '#b91c1c' },
-  { name: 'GREEN', fill: '#22c55e', edge: '#15803d' },
-  { name: 'YELLOW', fill: '#facc15', edge: '#a16207' },
-  { name: 'PURPLE', fill: '#a855f7', edge: '#7e22ce' },
+/** One colour and one symbol per seat (stones, seat pucks, ghost and callouts). */
+export const SEATS = [
+  { name: 'RED', fill: '#ff4f5e', edge: '#a3122a', symbol: 'circle' },
+  { name: 'BLUE', fill: '#3d8bff', edge: '#163f9c', symbol: 'triangle' },
+  { name: 'GREEN', fill: '#2fcf6b', edge: '#127238', symbol: 'square' },
+  { name: 'YELLOW', fill: '#ffcc1f', edge: '#9c6a00', symbol: 'diamond' },
+  { name: 'PURPLE', fill: '#a95cff', edge: '#5b1fae', symbol: 'star' },
+  { name: 'ORANGE', fill: '#ff8a1f', edge: '#a34400', symbol: 'hexagon' },
+  { name: 'CYAN', fill: '#20d3e6', edge: '#0a6f7c', symbol: 'plus' },
+  { name: 'PINK', fill: '#ff5fbf', edge: '#a3136b', symbol: 'heart' },
 ];
 
-/** One colour per seat: the ring under a runner's feet. */
-export const RUNNER_COLORS = ['#ffffff', '#ffb86b', '#7cf2e6', '#ff8fd8', '#c0ff6b', '#9ab7ff', '#ffd9a0', '#d0b0ff'];
+export const seatStyle = (index) => SEATS[((index % SEATS.length) + SEATS.length) % SEATS.length];
 
-/** Water thrown up where something drops in: a particle burst of the game's own (`feel.particles.burst(SPLASH, at)`). */
-export const SPLASH = { count: 14, life: [0.35, 0.7], speed: [2, 5], direction: Math.PI / 2, spread: 1.3, size: [0.12, 0.22], sizeEnd: 0.05, color: ['#ffffff', '#c4f4ff'], gravity: 10, drag: 0.8 };
+/** Dust kicked up where a stone lands, and crumbs off the rim where one falls (feel.particles.burst(..., at)). */
+export const THUD = { count: 10, life: [0.25, 0.5], speed: [2, 5], spread: Math.PI * 2, size: [0.12, 0.24], sizeEnd: 0.02, color: ['#fff6e2', '#e9d2a6'], drag: 3 };
+export const SPILL = { count: 14, life: [0.4, 0.8], speed: [3, 7], spread: 1.1, size: [0.14, 0.3], sizeEnd: 0.04, color: ['#ffd23f', '#ff4d3d', '#ffffff'], drag: 1.5 };
 
 /** A higher layer draws over a lower one. */
-export const LAYERS = defineRenderLayers(['water', 'stage', 'pits', 'tiles', 'symbols', 'shadows', 'runners', 'fx']);
+export const LAYERS = defineRenderLayers(['floor', 'shadow', 'table', 'rings', 'marks', 'stoneShadows', 'stones', 'ghost', 'seats', 'fx']);
 
 export const theme = { font: FONT, colors: { accent: COLORS.gold }, shadow: 'hard' };

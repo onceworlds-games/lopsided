@@ -1,175 +1,158 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { Rng } from '@onceworlds/engine';
-import { actions, controls } from '../actions.js';
-import { symbolPoints } from '../look.js';
-import { startPoint } from '../scenes.js';
+import { controls } from '../actions.js';
 import {
-  COLOR_COUNT,
-  FLOOR,
-  HALF,
-  ROUND_SECONDS,
-  WAVE,
-  colorsFor,
-  distanceToTile,
-  floorAt,
-  isSafe,
-  makeFloor,
-  nearestSafe,
-  roundIsOver,
-  roundScore,
-  safeCount,
-  showTime,
-  tileAt,
-  tileCenter,
-  whoFalls,
+  BEATS,
+  STONE,
+  TABLE,
+  beatLength,
+  clockAt,
+  collide,
+  danger,
+  dropTime,
+  makeStone,
+  pointsAt,
+  roundLength,
+  scoreTable,
+  settled,
+  stepTable,
+  stiffnessFor,
+  targetTilt,
+  tipperOf,
 } from '../rules.js';
 
-// The rules are plain functions, so they are tested without a game: this is where a change to a number shows what it does.
+// The rules on their own: the clock, the rings, the lean, the physics. No engine, no network.
+
+const R = TABLE.radius;
+const level = (seats = 4) => ({ x: 0, y: 0, vx: 0, vy: 0, k: stiffnessFor(seats) });
+const run = (table, stones, seconds) => {
+  const fell = [];
+  for (let t = 0; t < seconds; t += 1 / 60) fell.push(...stepTable(table, stones, 1 / 60));
+  return fell;
+};
 
 describe('the clock', () => {
-  it('shows the floor first, then goes wave after wave through show, drop and rest', () => {
-    expect(floorAt(0).phase).toBe('idle');
-    expect(floorAt(WAVE.grace - 0.01).phase).toBe('idle');
-    const first = floorAt(WAVE.grace + 0.1);
-    expect(first).toMatchObject({ wave: 0, phase: 'show' });
-    expect(first.left).toBeCloseTo(showTime(0) - 0.1);
-    const drop = floorAt(WAVE.grace + showTime(0) + 0.2);
-    expect(drop).toMatchObject({ wave: 0, phase: 'drop' });
-    expect(drop.t).toBeCloseTo(0.2);
-    expect(floorAt(WAVE.grace + showTime(0) + WAVE.drop + 0.2)).toMatchObject({ wave: 0, phase: 'rest' });
-    expect(floorAt(WAVE.grace + showTime(0) + WAVE.drop + WAVE.rest + 0.05)).toMatchObject({ wave: 1, phase: 'show' });
-  });
-
-  it('never skips or repeats a moment: the phases follow each other all the way through a round', () => {
-    const order = { idle: 0, show: 1, drop: 2, rest: 3 };
-    let last = floorAt(0);
-    for (let t = 0.05; t <= ROUND_SECONDS; t += 0.05) {
-      const now = floorAt(t);
-      if (now.wave === last.wave) expect(order[now.phase]).toBeGreaterThanOrEqual(order[last.phase]);
-      else expect(now.wave).toBe(last.wave + 1);
-      expect(now.left).toBeGreaterThan(0);
-      last = now;
+  it('has a grace, eight beats that speed up, a settle, then the round is done', () => {
+    expect(clockAt(0).phase).toBe('idle');
+    expect(clockAt(BEATS.grace + 0.01)).toMatchObject({ phase: 'aim', beat: 0 });
+    for (let i = 1; i < BEATS.perRound; i++) {
+      expect(beatLength(i)).toBeLessThan(beatLength(i - 1));
+      expect(clockAt(dropTime(i - 1) + 0.01)).toMatchObject({ phase: 'aim', beat: i });
     }
+    expect(clockAt(dropTime(BEATS.perRound - 1) + 0.01).phase).toBe('settle');
+    expect(clockAt(roundLength() + 0.01).phase).toBe('done');
+    expect(beatLength(BEATS.perRound - 1)).toBeGreaterThanOrEqual(2.5);
+    // A round is short enough for "one more".
+    expect(roundLength()).toBeGreaterThan(25);
+    expect(roundLength()).toBeLessThan(40);
   });
 });
 
-describe('the ramp', () => {
-  it('gets harder every wave and every round: less time, more colours, fewer safe tiles', () => {
-    for (let wave = 1; wave < 12; wave++) {
-      expect(showTime(wave)).toBeLessThanOrEqual(showTime(wave - 1));
-      expect(colorsFor(wave)).toBeGreaterThanOrEqual(colorsFor(wave - 1));
-      expect(safeCount(wave)).toBeLessThanOrEqual(safeCount(wave - 1));
+describe('scoring', () => {
+  it('pays 1 in the middle, 2 on the inner ring, 3 on the rim and nothing off the table', () => {
+    expect(pointsAt(0, 0)).toBe(1);
+    expect(pointsAt(R * 0.55, 0)).toBe(2);
+    expect(pointsAt(0, -R * 0.9)).toBe(3);
+    expect(pointsAt(R * 1.01, 0)).toBe(0);
+    const stones = [makeStone(0, 0, 0), makeStone(0, R * 0.9, 0), makeStone(1, 0, R * 0.5), { ...makeStone(1, R * 0.9, 0), gone: true }];
+    expect(scoreTable(stones, [0, 1, 2])).toEqual({ 0: 4, 1: 2, 2: 0 });
+  });
+});
+
+describe('the lean', () => {
+  it('leans toward the weight: a boulder weighs three stones, and the lean is capped', () => {
+    const one = targetTilt([makeStone(0, 9, 0)]);
+    const boulder = targetTilt([makeStone(0, 9, 0, true)]);
+    expect(one.x).toBeGreaterThan(0);
+    expect(boulder.x).toBeCloseTo(one.x * STONE.boulderMass);
+    const pile = targetTilt(Array.from({ length: 60 }, () => makeStone(0, 0, -9.5)));
+    expect(Math.hypot(pile.x, pile.y)).toBeCloseTo(TABLE.maxTilt);
+    expect(pile.y).toBeLessThan(0);
+  });
+
+  it('is stiffer for more players, so eight players rock it about as much as four', () => {
+    expect(stiffnessFor(8)).toBeGreaterThan(stiffnessFor(4));
+    expect(stiffnessFor(2)).toBeLessThan(stiffnessFor(4));
+    expect(stiffnessFor(4)).toBe(TABLE.stiffness);
+  });
+});
+
+describe('the physics', () => {
+  it('holds a balanced table still: nothing slides, nothing falls', () => {
+    const table = level();
+    const stones = [];
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      stones.push(makeStone(i % 4, Math.cos(a) * 9, Math.sin(a) * 9), makeStone(i % 4, Math.cos(a) * 5, Math.sin(a) * 5));
     }
-    expect(showTime(2, 3)).toBeLessThan(showTime(2, 1));
-    expect(safeCount(2, 3)).toBeLessThan(safeCount(2, 1));
+    expect(run(table, stones, 6)).toEqual([]);
+    expect(stones.every((s) => !s.sliding)).toBe(true);
+    expect(danger(table)).toBeLessThan(0.2);
   });
 
-  it('keeps a floor you can read: at least a second to run, at least two safe tiles, never more colours than exist', () => {
-    for (let round = 1; round <= 7; round++) {
-      for (let wave = 0; wave < 40; wave++) {
-        expect(showTime(wave, round)).toBeGreaterThanOrEqual(0.8);
-        expect(safeCount(wave, round)).toBeGreaterThanOrEqual(2);
-        expect(colorsFor(wave, round)).toBeLessThanOrEqual(COLOR_COUNT);
-      }
-    }
-    expect(showTime(0)).toBeGreaterThanOrEqual(2.5);
-  });
-});
-
-describe('a wave\'s floor', () => {
-  it('is the same on every page for the same seed, and different for another wave', () => {
-    const a = makeFloor(new Rng(7).fork('w3'), 3);
-    const b = makeFloor(new Rng(7).fork('w3'), 3);
-    const c = makeFloor(new Rng(7).fork('w4'), 3);
-    expect(a).toEqual(b);
-    expect(a.tiles).not.toEqual(c.tiles);
+  it('a heavy side tips the table: its rim stones slide off, the high side keeps its stones, and the slide stops itself', () => {
+    const table = level();
+    const low = [];
+    for (let i = 0; i < 8; i++) low.push(makeStone(1, Math.cos(-0.6 + i * 0.17) * 9.2, Math.sin(-0.6 + i * 0.17) * 9.2));
+    const high = [makeStone(2, -8.5, 1), makeStone(2, -8.5, -1.5)];
+    const middle = [makeStone(3, 0.5, 0.5)];
+    const stones = [...low, ...high, ...middle];
+    const fell = run(table, stones, 8);
+    expect(fell.length).toBeGreaterThanOrEqual(3);
+    expect(fell.every((s) => s.seat === 1)).toBe(true);
+    expect(high.every((s) => !s.gone)).toBe(true);
+    expect(middle[0].gone).toBe(false);
+    // Once the heavy stones are gone the table levels and everything is still.
+    expect(settled(table, stones)).toBe(true);
+    expect(danger(table)).toBeLessThan(1);
   });
 
-  it('has exactly the number of safe tiles it should, and only colours that are in play', () => {
-    for (let wave = 0; wave < 10; wave++) {
-      const floor = makeFloor(new Rng(wave + 1), wave);
-      expect(floor.tiles).toHaveLength(FLOOR.cols * FLOOR.rows);
-      expect(floor.tiles.filter((color) => color === floor.target)).toHaveLength(safeCount(wave));
-      expect(Math.max(...floor.tiles)).toBeLessThan(floor.colors);
-      expect(floor.target).toBeLessThan(floor.colors);
-    }
-  });
-});
-
-describe('the floor in space', () => {
-  it('finds the tile under a point, and none off the edge', () => {
-    expect(tileAt(-HALF.x + 0.1, -HALF.y + 0.1)).toMatchObject({ col: 0, row: 0, index: 0 });
-    expect(tileAt(HALF.x - 0.1, HALF.y - 0.1)).toMatchObject({ col: FLOOR.cols - 1, row: FLOOR.rows - 1 });
-    expect(tileAt(HALF.x + 0.1, 0)).toBeNull();
-    const c = tileCenter(3, 2);
-    expect(tileAt(c.x, c.y)).toMatchObject({ col: 3, row: 2 });
-    expect(distanceToTile(c.x, c.y, 3, 2)).toBe(0);
-    expect(distanceToTile(c.x + FLOOR.tile / 2 + 0.5, c.y, 3, 2)).toBeCloseTo(0.5);
+  it('a boulder on the far rim saves a pile that would have slid', () => {
+    const pile = () => Array.from({ length: 7 }, (_, i) => makeStone(1, 9, -2 + i * 0.7));
+    const without = pile();
+    const lost = run(level(), without, 6).length;
+    const saved = pile();
+    const lostWithBoulder = run(level(), [...saved, makeStone(0, -9.2, 0, true)], 6).filter((s) => s.seat === 1).length;
+    expect(lost).toBeGreaterThan(lostWithBoulder);
   });
 
-  it('counts a runner on the edge of a safe tile as safe, but not one that is clearly off it', () => {
-    const tiles = new Array(FLOOR.cols * FLOOR.rows).fill(1);
-    tiles[tileAt(0.5, 0.5).index] = 0;
-    const edge = tileCenter(tileAt(0.5, 0.5).col, tileAt(0.5, 0.5).row);
-    expect(isSafe(edge.x, edge.y, tiles, 0)).toBe(true);
-    // Just over the edge, inside the margin: still safe. Further: not.
-    expect(isSafe(edge.x + FLOOR.tile / 2 + WAVE.margin - 0.05, edge.y, tiles, 0)).toBe(true);
-    expect(isSafe(edge.x + FLOOR.tile / 2 + WAVE.margin + 0.2, edge.y, tiles, 0)).toBe(false);
-    expect(isSafe(-HALF.x + 0.5, -HALF.y + 0.5, tiles, 0)).toBe(false);
-  });
-
-  it('finds the nearest tile of a colour, and the next nearest for a bot that slips', () => {
-    const tiles = new Array(FLOOR.cols * FLOOR.rows).fill(1);
-    tiles[0] = 0;
-    tiles[FLOOR.cols * FLOOR.rows - 1] = 0;
-    const near = nearestSafe(-HALF.x + 1, -HALF.y + 1, tiles, 0);
-    expect(near).toMatchObject({ col: 0, row: 0 });
-    expect(nearestSafe(-HALF.x + 1, -HALF.y + 1, tiles, 0, 1)).toMatchObject({ col: FLOOR.cols - 1, row: FLOOR.rows - 1 });
-    expect(nearestSafe(0, 0, tiles, 4)).toBeNull();
-  });
-});
-
-describe('who falls', () => {
-  it('is everyone not on the called colour', () => {
-    expect(whoFalls([{ id: 'a', safe: true }, { id: 'b', safe: false }, { id: 'c', safe: false }])).toEqual(['b', 'c']);
-    expect(whoFalls([{ id: 'a', safe: true }])).toEqual([]);
-  });
-
-  it('is nobody when that would be everybody, so a round always has a winner or a time limit', () => {
-    expect(whoFalls([{ id: 'a', safe: false }, { id: 'b', safe: false }])).toEqual([]);
-  });
-
-  it('ranks those still in above those who fell, and the later the fall the better', () => {
-    expect(roundScore({ out: false, outAt: 0 })).toBeGreaterThan(roundScore({ out: true, outAt: 50 }));
-    expect(roundScore({ out: true, outAt: 30 })).toBeGreaterThan(roundScore({ out: true, outAt: 12 }));
-    expect(roundIsOver(1, 4)).toBe(true);
-    expect(roundIsOver(2, 4)).toBe(false);
-    expect(roundIsOver(1, 1)).toBe(false);
-  });
-});
-
-describe('look and map', () => {
-  it('gives each colour a shape of its own, so the game is playable without telling colours apart', () => {
-    const outlines = Array.from({ length: COLOR_COUNT }, (_, kind) => JSON.stringify(symbolPoints(kind, 1).map(([x, y]) => [+x.toFixed(2), +y.toFixed(2)])));
-    expect(new Set(outlines).size).toBe(COLOR_COUNT);
-  });
-
-  it('starts every seat on the floor, whatever the number of seats', () => {
-    for (let count = 2; count <= 8; count++) {
-      for (let i = 0; i < count; i++) {
-        const at = startPoint(i, count);
-        expect(tileAt(at.x, at.y)).not.toBeNull();
+  it('never leaves two stones overlapping, even dropped on the same spot', () => {
+    const stones = [makeStone(0, 3, 3), makeStone(1, 3, 3), makeStone(2, 3.1, 3), makeStone(3, 3, 3, true)];
+    for (let i = 0; i < 10; i++) collide(stones);
+    for (let i = 0; i < stones.length; i++) {
+      for (let j = i + 1; j < stones.length; j++) {
+        const d = Math.hypot(stones[i].x - stones[j].x, stones[i].y - stones[j].y);
+        expect(d).toBeGreaterThan((stones[i].r + stones[j].r) * 0.95);
       }
     }
   });
+
+  it('is the same every time for the same drops (a new host carries on exactly)', () => {
+    const play = () => {
+      const table = level(6);
+      const stones = [];
+      for (let i = 0; i < 30; i++) {
+        stones.push(makeStone(i % 6, Math.cos(i * 2.1) * (3 + (i % 7)), Math.sin(i * 2.1) * (3 + (i % 7)), i % 11 === 0));
+        run(table, stones, 0.5);
+      }
+      return JSON.stringify(stones.map((s) => [s.x.toFixed(6), s.y.toFixed(6), s.gone]));
+    };
+    expect(play()).toBe(play());
+  });
 });
 
-describe('controls', () => {
-  it('are listed in onceworlds.json exactly as the action map says', () => {
-    const file = JSON.parse(readFileSync(new URL('../onceworlds.json', import.meta.url), 'utf8'));
-    expect(file.controls).toEqual(controls);
-    expect(Object.keys(actions)).toEqual(['move', 'dash']);
-    expect(file.engine).toBe('1');
+describe('who tipped it', () => {
+  it('credits the drop that pushed hardest toward the lean, and nobody when no drop leaned that way', () => {
+    const lean = { x: 0.1, y: 0 };
+    expect(tipperOf([makeStone(0, -9, 0), makeStone(1, 6, 0), makeStone(2, 4, 0, true)], lean)).toBe(2);
+    expect(tipperOf([makeStone(0, -9, 0)], lean)).toBe(-1);
+  });
+});
+
+describe('the listing', () => {
+  it('names a control for each action in onceworlds.json', () => {
+    const listing = JSON.parse(readFileSync(new URL('../onceworlds.json', import.meta.url), 'utf8'));
+    const actions = listing.controls.map((c) => c.action);
+    for (const control of controls) expect(actions).toContain(control.action);
   });
 });

@@ -1,34 +1,27 @@
 {
   "slug": "lopsided",
   "name": "Lopsided",
-  "description": "One wobbly table for everyone. Drop stones where they score most, tip the table toward your rivals, and watch their pile slide off.",
+  "description": "One wobbly table for up to eight. Everyone drops a stone at once; the rim scores most, but weight tips the table and whatever slides off is gone.",
   "engine": "1",
   "dir": ".",
   "productionBranch": "main",
-  "genre": "Party",
+  "genre": "Strategy",
   "controls": [
     {
       "keys": [
-        "W",
-        "A",
-        "S",
-        "D"
+        "Tap",
+        "Click",
+        "Drag"
       ],
-      "action": "Move"
+      "action": "Aim your stone"
     },
     {
       "keys": [
-        "Arrows"
-      ],
-      "action": "Move"
-    },
-    {
-      "keys": [
-        "Space",
+        "B",
         "Shift"
       ],
-      "action": "Dash"
+      "action": "Boulder (3x weight)"
     }
   ],
-  "help": "Run to the tiles with the called color and shape before the floor drops. Fall and you float on as a ghost until the next round."
+  "help": "Each beat, tap the table where your next stone should land (drag to adjust). Everyone's stones drop at once. The table tips toward the weight and stones that slide off the edge are lost. At the end of a round, stones on the table score: rim 3, ring 2, middle 1. Once a round, arm your boulder: three times the weight."
 }

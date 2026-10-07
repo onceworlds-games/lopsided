@@ -1,84 +1,93 @@
-import { Transform, defineSystem } from '@onceworlds/engine';
-import { Avatar2D } from '@onceworlds/engine/modules';
-import { Beat, Floor, Look, Runner, Status } from '../components.js';
-import { FLOOR, tileCenter } from '../rules.js';
-import { poseRunner } from '../look.js';
-import { COLORS, LAYERS, SPLASH } from '../theme.js';
+import { defineSystem } from '@onceworlds/engine';
+import { servicesOf } from '@onceworlds/engine/modules';
+import { Beat, Board, Callout, RoundClock, Seat, Stone } from '../components.js';
+import { boardOf } from '../queries.js';
+import { danger } from '../rules.js';
+import { seatStyle } from '../theme.js';
+import { leanOf } from './looks.js';
 
-// Every action answers within a tenth of a second, on every page. Nothing here decides anything: each page watches the floor and the
-// replicated `Status`, compares them with what it already showed (`Beat`, `Look`) and plays the effect once.
+// Every action answers within a tenth of a second, on every page. Nothing here decides anything: each page watches the round's clock, the
+// Board and the stones, compares them with what it already showed (`Beat`) and plays the effect once.
 //
-//   floor-feel   - a bell when a colour is called, a tick each second before a drop, the drop itself (sound, shake, a splash where
-//                  tiles fell), the floor coming back.
-//   runner-look  - depth, and the pale floating ghost of a runner who is out, with a pop and "OUT" the moment it happens.
-//   music        - from the asset library: calm before the match, bouncy while it is on.
+//   beat-feel - ticks before each drop, the drop itself (one thud for everyone's stones, a heavier one with a boulder), the table creaking
+//               when it is close to shedding, stones going over the edge, and "TIPPED BY ..." when one beat's drop sheds three or more
+//               rival stones.
+//   music     - calm before the match, tense while it is on, more layers as the table nears its tipping point.
 
-export const FloorFeel = defineSystem({
-  name: 'party:floor-feel',
+export const BeatFeel = defineSystem({
+  name: 'lopsided:beat-feel',
   stage: 'update',
-  run({ world, feel, audio }) {
-    const floor = world.resource(Floor);
+  queries: { stones: [Stone], seats: [Seat] },
+  run({ queries, world, game, flow, feel, audio, ui, time, net }) {
+    if (servicesOf(game).poster?.active) return;
     const beat = world.resource(Beat);
-    const changed = beat.id !== floor.key || beat.phase !== floor.phase;
-    if (changed) {
-      const first = beat.id === '';
-      beat.id = floor.key;
-      beat.phase = floor.phase;
-      beat.tick = -1;
-      if (!first && floor.live) {
-        if (floor.phase === 'show') audio?.play('bell');
-        if (floor.phase === 'drop') {
-          feel.shake(0.35);
-          audio?.play('water.splash');
-          // A splash where each tile dropped into the water, not on the safe ones.
-          floor.tiles.forEach((color, index) => {
-            if (color === floor.target) return;
-            const at = tileCenter(index % FLOOR.cols, Math.floor(index / FLOOR.cols));
-            feel.particles.burst(SPLASH, at, { count: 4, layer: LAYERS.fx });
-          });
-        }
-        if (floor.phase === 'rest') audio?.play('ui.popup');
-      }
+    const clock = world.resource(RoundClock);
+    if (!clock.live) {
+      if (flow.phase === 'lobby' || flow.phase === 'title') beat.key = '';
+      return;
     }
-    // A tick for each of the last three seconds before the drop, so nobody is surprised.
-    if (floor.live && floor.phase === 'show') {
-      const second = Math.ceil(floor.left);
-      if (second <= 3 && second !== beat.tick) {
-        beat.tick = second;
-        audio?.play('timer.tick', { pitch: 1 + (3 - second) * 0.12 });
-      }
+    if (beat.key !== clock.key) {
+      Object.assign(beat, { key: clock.key, dropped: -1, fell: 0, tick: -1, callout: -1, armed: false });
     }
-  },
-});
+    const board = boardOf(world)?.get(Board);
 
-export const RunnerLook = defineSystem({
-  name: 'party:runner-look',
-  stage: 'update',
-  query: [Runner, Status, Look, Transform],
-  run({ query, world, time, feel, audio, net }) {
-    query.each((entity, _runner, status, look, tr) => {
-      poseRunner(world, entity, look, status.out, time.now);
-      if (status.out && !look.out) {
-        look.out = true;
-        const { x, y } = tr.position;
-        feel.particles.burst(SPLASH, entity, { layer: LAYERS.fx });
-        feel.floatText('OUT', { x, y: y + 2.2 }, { color: COLORS.bad, size: 1.1, layer: LAYERS.fx });
-        const figure = world.entity(look.figure);
-        const body = figure && Avatar2D.body(figure);
-        if (body) feel.pop(body, { from: 0.2 });
-        const mine = net.owner(entity) === net.me;
-        audio?.play(mine ? 'stinger.lose' : 'water.splash', { at: entity, volume: 0.7 });
-        if (mine) feel.shake(0.4);
+    // A tick for each of the last three seconds of a beat, so nobody is surprised by the drop.
+    if (clock.phase === 'aim') {
+      const second = Math.ceil(clock.left);
+      const id = clock.beat * 10 + second;
+      if (second <= 3 && id !== beat.tick) {
+        beat.tick = id;
+        audio?.play('timer.tick', { pitch: 1 + (3 - second) * 0.15, volume: 0.45 });
       }
-    });
+    }
+    if (!board) return;
+
+    // The drop: one thud for everyone's stones together.
+    if (board.dropped > beat.dropped) {
+      beat.dropped = board.dropped;
+      let heavy = false;
+      queries.stones.each((_e, stone) => void (stone.beat === board.dropped && stone.heavy && (heavy = true)));
+      audio?.play(heavy ? 'land.heavy' : 'block', { pitch: heavy ? 0.7 : 0.9, volume: heavy ? 1 : 0.8 });
+      feel?.shake(heavy ? 0.42 : 0.16);
+    }
+
+    // Stones over the edge: a falling sound each (a few at most per frame).
+    if (board.fell > beat.fell) {
+      const n = board.fell - beat.fell;
+      beat.fell = board.fell;
+      audio?.play('whoosh.fast', { pitch: 0.7, volume: Math.min(1, 0.35 + n * 0.15) });
+      audio?.play('hit.punch', { pitch: 0.6, volume: 0.5, delay: 0.12 });
+    }
+
+    // An avalanche: three or more rival stones off after one beat's drop.
+    if (board.tipFell >= 3 && beat.callout !== board.tipBeat) {
+      beat.callout = board.tipBeat;
+      let name = 'Somebody';
+      let mine = false;
+      queries.seats.each((_e, seat) => {
+        if (seat.index !== board.tipper) return;
+        mine = seat.id === net?.me;
+        name = flow.seats?.find((s) => s.id === seat.id)?.name ?? name;
+      });
+      const style = seatStyle(board.tipper);
+      const text = mine ? 'YOU TIPPED IT!' : `TIPPED BY ${name.toUpperCase()}`;
+      ui?.callout(text, { color: style.fill, size: 58, ms: 1700, sound: false });
+      Object.assign(world.resource(Callout), { text, sub: '', color: style.fill, at: time.now });
+      audio?.play(mine ? 'stinger.win' : 'explosion.small', { volume: 0.8 });
+      feel?.shake(0.55);
+      feel?.hitStop(70);
+    }
   },
 });
 
 export const Music = defineSystem({
-  name: 'party:music',
+  name: 'lopsided:music',
   stage: 'update',
-  run({ flow, audio }) {
-    const song = flow.phase === 'title' || flow.phase === 'lobby' || flow.phase === 'results' ? 'music.calm' : 'music.happy';
-    if (audio && audio.music.current !== song) audio.music.play(song);
+  run({ world, flow, audio }) {
+    if (!audio) return;
+    const calm = flow.phase === 'title' || flow.phase === 'lobby' || flow.phase === 'results';
+    const song = calm ? 'music.calm' : 'music.mystery';
+    if (audio.music.current !== song) audio.music.play(song);
+    if (!calm) audio.music.setIntensity?.(Math.min(1, danger(leanOf(world)) * 0.8));
   },
 });

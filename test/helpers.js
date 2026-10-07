@@ -1,95 +1,69 @@
 import { Transform } from '@onceworlds/engine';
-import { FlowState, netOf, servicesOf } from '@onceworlds/engine/modules';
+import { FlowState, servicesOf } from '@onceworlds/engine/modules';
 import { simulate } from '@onceworlds/engine/test';
-import { Floor, Runner, Status } from '../components.js';
+import { Aim, Board, Hand, RoundClock, Seat, Stone } from '../components.js';
 import { gameConfig } from '../game.config.js';
-import { RUNNER, nearestSafe, tileAt } from '../rules.js';
 
-// Small helpers the party tests share. They read the game the way a player's page would and press buttons through the Input service.
+// Small helpers the tests share. They read a game the way a player's page would.
 
 export const phaseOf = (game) => game.world.resource(FlowState).phase;
-export const floorOf = (game) => game.world.resource(Floor);
+export const clockOf = (game) => game.world.resource(RoundClock);
 export const inputOf = (game) => servicesOf(game).input;
 
-/** The entity of a runner on this page, or undefined while the page has not seen it yet. */
-export function runnerOn(game, id) {
+/** This page's entity for seat `id` (a match seat, with its Hand), or undefined. */
+export function seatOn(game, id) {
   let found;
-  game.world.query([Runner]).each((entity, runner) => void (runner.id === id && (found = entity)));
+  game.world.query([Seat, Aim, Hand]).each((entity, seat) => void (seat.id === id && (found = entity)));
   return found;
 }
 
-/** Every runner on a page as plain rows. */
-export function runnersOn(game) {
+/** The round's Board on this page, as plain data (or null before it arrives). */
+export function boardOn(game) {
+  let found = null;
+  game.world.query([Board]).each((_e, b) => void (found ??= { x: b.x, y: b.y, dropped: b.dropped, fell: b.fell, tipper: b.tipper, tipFell: b.tipFell }));
+  return found;
+}
+
+/** Every stone on a page as plain rows. */
+export function stonesOn(game) {
   const rows = [];
-  game.world.query([Runner, Status, Transform]).each((entity, runner, status, tr) => {
-    rows.push({ id: runner.id, entity, x: tr.position.x, y: tr.position.y, out: status.out });
+  game.world.query([Stone, Transform]).each((entity, stone, tr) => {
+    rows.push({ entity, seat: stone.seat, beat: stone.beat, heavy: stone.heavy, gone: stone.gone, x: tr.position.x, y: tr.position.y });
   });
   return rows;
 }
 
-/** Put a runner exactly here (on the page that plays it: that page owns its position). */
-export function place(game, id, x, y) {
-  const entity = runnerOn(game, id);
-  entity.get(Transform).position.set(x, y, 0);
-  netOf(game).teleport(entity);
-  return entity;
-}
-
 /**
- * A timeline for `simulate`'s `onFrame`: each step `[t, fn]` runs once, `t` seconds after every page is playing a round. Steps get the
- * running simulation (`run.games[0]` is the first player, who is the host). `each` runs every frame once play has begun.
+ * Humans who play: on every human page, once a beat has been on for `delay` seconds and this page has not aimed in it, aim where
+ * `plan(page, beat, round)` says ({ x, y, heavy }). Use it as (part of) `onFrame`.
  */
-export function timeline(steps, each) {
-  let since = null;
-  let next = 0;
+export function aimers(plan, delay = 0.5) {
   return (run) => {
-    if (since === null) {
-      if (!run.games.every((game) => phaseOf(game) === 'playing')) return;
-      since = run.seconds;
+    for (const game of run.games) {
+      if (!game.room || phaseOf(game) !== 'playing') continue;
+      const clock = clockOf(game);
+      if (!clock.live || clock.phase !== 'aim' || clock.t < delay) continue;
+      const seat = seatOn(game, game.room.me.id);
+      if (!seat) continue;
+      const aim = seat.get(Aim);
+      if (aim.beat === clock.beat) continue;
+      const want = plan(game, clock.beat, game.world.resource(FlowState).round);
+      aim.x = want.x;
+      aim.y = want.y;
+      aim.heavy = !!want.heavy;
+      aim.beat = clock.beat;
     }
-    const t = run.seconds - since;
-    while (next < steps.length && t >= steps[next][0]) steps[next++][1](run, t);
-    each?.(run, t);
   };
 }
 
-/** Two players (ann is the host, bo the other) in a one-round match with no bots, over a slow network. Steps are a `timeline`. */
-export function duel(steps, until, { each, ...options } = {}) {
-  return simulate(gameConfig({ quick: true, rounds: 1, fill: 0 }), {
-    humans: 2,
-    seed: 5,
-    latency: 30,
-    seconds: 150,
-    until,
-    onFrame: timeline(steps, each),
-    ...options,
-  });
-}
+/** A human who drops on the rim, going round the table beat by beat, and arms the boulder on the last beat. */
+export const rimmer = aimers((game, beat) => {
+  const a = beat * 0.8 + (game.room.me.id.length % 3);
+  return { x: Math.cos(a) * 8.6, y: Math.sin(a) * 8.6, heavy: beat === 7 };
+});
 
-/**
- * Plays every human page like a decent player: when a colour is called, run to the nearest tile of it (dashing when short of time) and
- * stand there. Use it as (part of) `onFrame`. Pages that are not in a round, or whose runner is not here yet, are left alone.
- */
-export function players(run) {
-  for (const game of run.games) {
-    if (!game.room || phaseOf(game) !== 'playing') continue;
-    const me = runnersOn(game).find((r) => r.id === game.room.me.id);
-    if (!me) continue;
-    const input = inputOf(game);
-    const floor = floorOf(game);
-    if (floor.phase !== 'show' || me.out) {
-      if (floor.phase !== 'show') input.setAxis('move', 0, 0);
-      continue;
-    }
-    const goal = nearestSafe(me.x, me.y, floor.tiles, floor.target);
-    const here = tileAt(me.x, me.y);
-    if (!goal || (here && floor.tiles[here.index] === floor.target)) {
-      input.setAxis('move', 0, 0);
-      continue;
-    }
-    const d = Math.hypot(goal.x - me.x, goal.y - me.y) || 1;
-    // The stick's y points down on screen, so up on the map is -1.
-    input.setAxis('move', (goal.x - me.x) / d, -(goal.y - me.y) / d);
-    if (d / RUNNER.speed > floor.left && run.frames % 5 === 0) input.tap('dash');
-  }
+/** A match with `humans` players and bots, one round, short screens. */
+export function match(options = {}, sim = {}) {
+  const { humans = 1, bots = 3, rounds = 1, ...rest } = options;
+  return simulate(gameConfig({ quick: true, rounds, fill: humans + bots, ...rest }), { humans, bots, seed: 3, seconds: 400, onFrame: rimmer, until: (r) => r.matches > 0, ...sim });
 }

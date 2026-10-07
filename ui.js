@@ -1,67 +1,119 @@
 import { defineModule } from '@onceworlds/engine';
 import { UI, servicesOf } from '@onceworlds/engine/modules';
-import { Floor } from './components.js';
-import { symbolPoints } from './look.js';
-import { aliveCount } from './queries.js';
-import { COLORS, TILE_COLORS } from './theme.js';
+import { Aim, Beat, Board, Hand, RoundClock, Seat } from './components.js';
+import { boardOf, mySeat, plainStones } from './queries.js';
+import { BEATS, STONE, TABLE, danger, targetTilt } from './rules.js';
+import { COLORS, seatStyle } from './theme.js';
 
-// The HUD is what a runner needs to answer "what do I do?" and "am I still in?": the called colour (its name, its shape, the time left)
-// and how many are still in. The title, countdown, banner, scoreboard and podium are the engine's own screens.
+// The HUD answers "what now?" at a glance: the lean (a marble that rolls to the low side, red past the tipping point, and a ghost marble
+// for where your aimed stone would send it), the beats left, the seconds to the drop, and your boulder. Two words appear when they
+// matter ("TAP THE TABLE", "BOULDER ARMED") and then go. The title, countdown, banner, scoreboard and podium are the engine's own screens.
 
 /** What the HUD shows right now, as plain data (the tests read it too). */
-export function hudState(world) {
-  const floor = world.resource(Floor);
-  const total = floor.t + floor.left;
+export function hudState(world, me) {
+  const clock = world.resource(RoundClock);
+  const beat = world.resource(Beat);
+  const board = boardOf(world)?.get(Board);
+  const seat = mySeat(world, me);
+  const aim = seat?.get(Aim);
+  const hand = seat?.get(Hand);
+  const lean = board ? { x: board.x, y: board.y } : { x: 0, y: 0 };
+  let preview = null;
+  if (aim && clock.phase === 'aim' && aim.beat === clock.beat) {
+    const m = aim.heavy ? STONE.boulderMass : STONE.mass;
+    preview = targetTilt(plainStones(world), { x: aim.x, y: aim.y, m }, board?.k);
+  }
   return {
-    phase: floor.phase,
-    target: floor.target,
-    fraction: total > 0 ? floor.left / total : 0,
-    alive: aliveCount(world),
+    phase: clock.phase,
+    beat: clock.beat,
+    left: clock.left,
+    fraction: clock.length > 0 ? clock.left / clock.length : 0,
+    lean,
+    preview,
+    danger: danger(lean),
+    seat: seat ? seat.get(Seat).index : -1,
+    boulder: hand ? hand.boulder : false,
+    armed: beat.armed,
+    aimed: beat.aimed,
+    hasAim: !!aim && aim.beat === clock.beat && clock.phase === 'aim',
   };
 }
 
-/** A shape drawn in a square of the UI: the symbol of a colour. */
-const symbol = (kind, color) =>
+/** The lean gauge: a dish with the tipping ring, the marble where the lean is now, a ghost marble where your stone would send it. */
+const gauge = (state) =>
   UI.custom({
-    w: 40,
-    h: 40,
-    draw(painter, rect) {
-      const flat = symbolPoints(kind, rect.w * 0.42).flatMap(([x, y]) => [rect.x + rect.w / 2 + x, rect.y + rect.h / 2 - y]);
-      painter.polygon(flat, { fill: color, stroke: COLORS.ink, strokeWidth: 3 });
+    w: 64,
+    h: 64,
+    draw(p, r) {
+      const cx = r.x + r.w / 2;
+      const cy = r.y + r.h / 2;
+      const R = r.w / 2 - 3;
+      const reach = R - 8;
+      // The ring where stones on the rim start to go: the lean's danger is 1 there.
+      const edge = (TABLE.grip - TABLE.dome * TABLE.radius) / TABLE.maxTilt;
+      const hot = state.danger >= 1;
+      p.circle(cx, cy, R, { fill: COLORS.ink, stroke: hot ? COLORS.danger : COLORS.brass, strokeWidth: 3 });
+      p.circle(cx, cy, reach * edge + 7, { fill: '#00000000', stroke: hot ? COLORS.danger : '#ffffff55', strokeWidth: 2 });
+      const spot = (lean) => [cx + (lean.x / TABLE.maxTilt) * reach, cy - (lean.y / TABLE.maxTilt) * reach];
+      if (state.preview) {
+        const [gx, gy] = spot(state.preview);
+        p.circle(gx, gy, 6, { fill: '#ffffff40', stroke: '#ffffffaa', strokeWidth: 2 });
+      }
+      const [mx, my] = spot(state.lean);
+      p.circle(mx, my, 8, { fill: hot ? COLORS.danger : COLORS.gold, stroke: COLORS.ink, strokeWidth: 2 });
     },
   });
 
-/** The HUD as a UI tree. */
+/** Eight pips: the beats of the round, done ones dark, the current one in your colour. */
+const pips = (state, color) =>
+  UI.custom({
+    w: 8 * 14,
+    h: 14,
+    draw(p, r) {
+      for (let i = 0; i < BEATS.perRound; i++) {
+        const done = state.phase === 'settle' || state.phase === 'done' || i < state.beat;
+        const now = state.phase === 'aim' && i === state.beat;
+        p.circle(r.x + 7 + i * 14, r.y + 7, now ? 6 : 4.5, { fill: done ? '#ffffff30' : now ? color : '#ffffffcc', stroke: now ? COLORS.white : undefined, strokeWidth: now ? 2 : 0 });
+      }
+    },
+  });
+
 export function hudTree(state) {
-  const color = TILE_COLORS[state.target % TILE_COLORS.length];
-  const calling = state.phase === 'show';
+  const color = state.seat >= 0 ? seatStyle(state.seat).fill : COLORS.gold;
+  const word =
+    state.phase === 'idle' ? UI.label('GET READY', { size: 24, color: 'accent' })
+    : state.phase === 'aim' ? UI.label(state.left <= BEATS.lock ? 'DROP!' : `DROP IN ${Math.ceil(state.left)}`, { size: 24, color: state.left <= 1 ? COLORS.danger : COLORS.white })
+    : UI.label('LAST SLIDES', { size: 22, color: 'accent' });
   return UI.panel(
-    { pad: [6, 14], gap: 4, align: 'center', radius: 16 },
-    UI.row(
-      { gap: 10, align: 'center' },
-      calling && symbol(state.target, color.fill),
-      state.phase === 'idle' && UI.label('GET READY', { size: 26, color: 'accent' }),
-      calling && UI.label(color.name, { size: 30, color: color.fill }),
-      state.phase === 'drop' && UI.label('DROP!', { size: 30, color: COLORS.bad }),
-      state.phase === 'rest' && UI.label('NEXT', { size: 26, color: 'dim' }),
-      UI.label(`${state.alive} IN`, { size: 20, color: 'dim', outline: false }),
+    { pad: [6, 12], gap: 12, dir: 'row', align: 'center', radius: 18 },
+    gauge(state),
+    UI.column(
+      { gap: 6, align: 'start' },
+      word,
+      pips(state, color),
+      state.phase === 'aim' && UI.bar(state.fraction, { w: 8 * 14, h: 6, fill: state.left <= 1 ? COLORS.danger : color }),
     ),
-    calling && UI.bar(state.fraction, { w: 160, h: 8, fill: color.fill }),
   );
 }
 
-export const PartyUI = () =>
+/** The two-word prompts: what to do now, shown only while it matters. */
+export function promptTree(state) {
+  if (state.phase !== 'aim' && state.phase !== 'idle') return null;
+  if (state.armed && state.boulder) return UI.label('BOULDER ARMED', { size: 26, color: COLORS.gold, weight: 800, outline: true });
+  if (!state.aimed && state.seat >= 0) return UI.label(state.phase === 'idle' ? 'TAP THE TABLE TO AIM' : 'TAP THE TABLE', { size: 30, color: COLORS.white, weight: 800, outline: true });
+  if (state.phase === 'aim' && !state.hasAim && state.seat >= 0 && state.left < 2.5) return UI.label('AIM!', { size: 30, color: COLORS.danger, weight: 800, outline: true });
+  return null;
+}
+
+export const GameUI = () =>
   defineModule({
-    name: 'party-ui',
+    name: 'lopsided-ui',
     init(game) {
       const { ui } = servicesOf(game);
+      const playing = ({ flow }) => flow !== null && flow.phase === 'playing' && !servicesOf(game).poster?.active;
+      const me = () => servicesOf(game).net?.me ?? 'me';
       // Under the round and the clock (the standard `flow.hud`), which sit at the top centre.
-      ui.view('party:hud', ({ world }) => hudTree(hudState(world)), {
-        anchor: 'top',
-        offset: [0, 58],
-        order: 4,
-        // (A poster is a staged scene with no round on: the HUD stays out of it.)
-        when: ({ flow }) => flow !== null && flow.phase === 'playing' && !servicesOf(game).poster?.active,
-      });
+      ui.view('lopsided:hud', ({ world }) => hudTree(hudState(world, me())), { anchor: 'top', offset: [0, 58], order: 4, when: playing });
+      ui.view('lopsided:prompt', ({ world }) => promptTree(hudState(world, me())) ?? UI.spacer(), { anchor: 'bottom', offset: [0, 40], order: 5, when: playing });
     },
   });

@@ -1,81 +1,83 @@
-import { Transform, defineSystem, hashString } from '@onceworlds/engine';
-import { Demo, Look, Runner, Status } from './components.js';
-import { buildFloor } from './level.js';
-import { poseRunner, puppet } from './look.js';
-import { aliveCount, runnersOf } from './queries.js';
-import { HALF, ROUND_SECONDS, roundIsOver, roundScore } from './rules.js';
+import { Transform, hashString } from '@onceworlds/engine';
+import { Aim, Board, Hand, Seat } from './components.js';
+import { roundScores } from './systems/host.js';
+import { startSandbox } from './systems/sandbox.js';
+import { lobbyColor } from './systems/aim.js';
+import { buildTable } from './table.js';
+import { plainStones } from './queries.js';
+import { RINGS, TABLE, roundLength, seatPlace, stiffnessFor } from './rules.js';
 
-// What happens where: the title screen's demo, the lobby, and the rules of a round that Flow runs. Flow calls these on the right page at
-// the right time (see game.config.js); what a scene spawns is removed when the scene ends.
+// What happens where: the title's demo, the lobby, and the rules of a round that Flow runs. Flow calls these on the right page at the
+// right time (see game.config.js); what a scene spawns is removed when the scene ends.
 
-/** A runner's components. The same list builds players, bots and lobby avatars; the systems dress and equip them on each page. */
-export const runnerParts = (id, color, x, y) => [Transform({ position: [x, y, 0] }), Runner({ id, color }), Status()];
-
-/** Seats start on a ring around the middle of the floor. */
-export function startPoint(index, count) {
-  const angle = Math.PI / 2 + (index / Math.max(1, count)) * Math.PI * 2;
-  return { x: Math.cos(angle) * HALF.x * 0.55, y: Math.sin(angle) * HALF.y * 0.55 };
-}
+/** A seat's components: where it sits round the table, who it is, its aim and its hand. Players and bots alike. */
+export const seatParts = (seat, count) => {
+  const at = seatPlace(seat.index, count);
+  return [Transform({ position: [at.x, at.y, 0] }), Seat({ id: seat.id, index: seat.index }), Aim(), Hand()];
+};
 
 // ---------------------------------------------------------------- title: the game alive behind the Play button
 
 export function titleScene(ctx) {
-  buildFloor(ctx.world);
-  for (let i = 0; i < 4; i++) puppet(ctx.world, { id: `bot:${i + 1}`, color: i }).add(Demo({ phase: i * 1.7, speed: 0.6 + i * 0.12 }));
+  buildTable(ctx.world);
+  startSandbox(ctx.world, 'demo');
 }
 
-/** Four runners wander the floor while the tiles fall around them. */
-export const DemoRun = defineSystem({
-  name: 'party:demo',
-  stage: 'update',
-  query: [Demo, Look, Transform],
-  run({ query, world, time }) {
-    query.each((entity, demo, look, tr) => {
-      const t = time.now * demo.speed + demo.phase;
-      tr.position.set(Math.sin(t * 0.9) * HALF.x * 0.7, Math.sin(t * 1.3 + demo.phase) * HALF.y * 0.7, 0);
-      poseRunner(world, entity, look, false, time.now);
-    });
-  },
-});
-
-// ---------------------------------------------------------------- lobby: run about while the others ready up
+// ---------------------------------------------------------------- lobby: practise on your own table while the others ready up
 
 export function lobbyScene(ctx) {
-  buildFloor(ctx.world);
+  buildTable(ctx.world);
+  startSandbox(ctx.world, 'practice');
 }
 
-/** Your own runner in the lobby, somewhere near the middle (the same spot every time for the same player). */
+/** Your own puck in the lobby, somewhere round the table (the same spot every time for the same player): everyone sees who is here. */
 export function lobbySpawn(ctx) {
   const id = ctx.room?.me.id ?? 'me';
-  const angle = (hashString(id) % 628) / 100;
-  return runnerParts(id, hashString(id) % 8, Math.cos(angle) * 2.5, Math.sin(angle) * 2);
+  const at = seatPlace(hashString(id) % 16, 16);
+  return [Transform({ position: [at.x, at.y, 0] }), Seat({ id, index: lobbyColor(id) })];
 }
 
 // ---------------------------------------------------------------- the round
 
+/** The last round's points, kept by the host between `rank` and the scoring's `award`. */
+const lastRound = new WeakMap();
+
 export const roundRules = {
-  banner: 'STAND ON THE COLOR',
-  seconds: ROUND_SECONDS,
+  banner: 'KEEP YOUR STONES ON',
+  seconds: Math.ceil(roundLength() + 6),
   setup(ctx) {
-    buildFloor(ctx.world);
+    buildTable(ctx.world);
+  },
+  populate(ctx) {
+    ctx.world.spawn([Transform(), Board({ k: stiffnessFor(ctx.seats.length) })], { owner: 'host' });
   },
   spawn(ctx, seat) {
-    const at = startPoint(seat.index, ctx.seats.length);
-    return runnerParts(seat.id, seat.index, at.x, at.y);
+    return seatParts(seat, ctx.seats.length);
   },
   isOver(ctx) {
-    return roundIsOver(aliveCount(ctx.world), ctx.seats.length);
+    return ctx.elapsed >= roundLength();
   },
-  /** Best first: still in beats out, and the later out the better. Those who fell together share a place. */
+  /** Points for the round: what each seat has on the table (rim 3, ring 2, middle 1). Higher is better. */
   rank(ctx) {
-    const scores = {};
-    runnersOf(ctx.world).each((_entity, runner, status) => {
-      scores[runner.id] = roundScore(status);
-    });
+    const scores = roundScores(ctx.world, ctx.seats);
+    lastRound.set(ctx.world, scores);
     return scores;
   },
-  /** The winner of a round gets a "wins" stat for the awards. */
-  end(ctx, outcome) {
-    for (const id of outcome[0] ?? []) ctx.flow.stat('wins', 1, id);
+  /** Stats for the awards: stones kept, and stones kept on the rim. */
+  end(ctx) {
+    const rim = {};
+    const kept = {};
+    const edge = RINGS[RINGS.length - 2].upTo * TABLE.radius;
+    for (const s of plainStones(ctx.world)) {
+      kept[s.seat] = (kept[s.seat] ?? 0) + 1;
+      if (Math.hypot(s.x, s.y) > edge) rim[s.seat] = (rim[s.seat] ?? 0) + 1;
+    }
+    for (const seat of ctx.seats) {
+      if (rim[seat.index]) ctx.flow.stat('rim', rim[seat.index], seat.id);
+      if (kept[seat.index]) ctx.flow.stat('kept', kept[seat.index], seat.id);
+    }
   },
 };
+
+/** The match's points are the rounds' points (not places): what the host worked out in `rank`. */
+export const roundPoints = (_ranking, ctx) => lastRound.get(ctx.world) ?? roundScores(ctx.world, ctx.seats);
