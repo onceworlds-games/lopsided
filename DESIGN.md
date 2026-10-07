@@ -10,13 +10,13 @@ there and the table tips toward *you*. Every stone anyone drops changes everyone
 
 ## The core loop (a beat is 3 seconds, a round is 8 beats, a match is 3 rounds: about 90 seconds of play)
 
-1. **Aim** (hidden): tap where your next stone lands. Your ghost stone shows only to you, and a ghost bubble on the table's spirit level
+1. **Aim** (hidden): tap where your next stone lands. Your ghost stone shows only to you, and a ghost marble on the lean gauge
    shows how *your* stone alone would tip it.
 2. **Drop**: every player's stone lands at the same moment. The reveal is the moment: who went greedy, who counterweighted, who
    dropped a boulder on your pile.
 3. **Tip and slide**: the table leans toward the weight. Stones near the low rim slide; anything past the edge falls and is lost.
    Weight that falls off levels the table again, so a slide stops itself.
-4. **Read** the new lean (the bubble, the red glowing low edge, the live scores) and aim again.
+4. **Read** the new lean (the marble, the red glowing low edge, the live scores) and aim again.
 
 At the end of a round the stones still on the table score by ring: **center 1, middle 2, rim 3**. Each player also has one **boulder**
 per round: three times the weight, for a counterweight that saves your pile or a sledgehammer that dumps a rival's. Or keep it: a
@@ -44,7 +44,7 @@ boulder still in hand at the end of the round is worth 3, so throwing it has to 
 ## The three riskiest assumptions
 
 1. **Hidden simultaneous drops feel like decisions, not a lottery.** Players must be able to read the lean and predict a slide. If not,
-   the game is noise. (Mitigation: the spirit level and its ghost bubble, the glowing low edge, a tipping threshold so that small
+   the game is noise. (Mitigation: the lean gauge and its ghost marble, the glowing low edge, a tipping threshold so that small
    imbalances do nothing and big ones do a lot.)
 2. **The physics stays legible and balanced.** No runaway table flips that clear everything, no dead-level table where nothing ever
    falls, and no single strategy (hug the middle, rush the rim, sabotage) that wins regardless. (Mitigation: a gently domed table plus
@@ -82,8 +82,10 @@ What changed on the way (each a rerun of the tournament):
 
 1. First tuning: 64% of stones lost at 8 seats and "turtle" won the most there: the table didn't scale with players. The stiffness now
    grows with the square root of the seat count, so 8 players rock it about as much as 4.
-2. Slides were bimodal (nothing, or 8+ stones at once). A gentle dome and kinetic friction close to the grip made rim stones go first
-   and slides stop themselves; gravity was raised so a slide is a quick, readable snap instead of a creep.
+2. Slides were bimodal: in 76% of beats nothing fell and in 14% six or more stones went at once. A gentle dome and kinetic friction
+   close to the grip made rim stones go first and slides stop themselves; gravity was raised so a slide is a quick, readable snap
+   instead of a creep. Now (a pool of smart, saboteur, climber, greedy and random bots, 3 to 8 seats): nothing falls in 50% of beats,
+   1-2 stones in 17%, 3-5 in 16%, 6 or more in 17%.
 3. With "use it or lose it" boulders every bot saved its boulder for the last beat: every round ended in a boulder storm decided by
    luck. A kept boulder now scores 3, so boulders are thrown only when they swing more than that, and the climax is a choice.
 4. That calmed the table so much that "climber" (always the uphill rim) won everything (losses fell to 14-20%). The table was made
