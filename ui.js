@@ -2,7 +2,7 @@ import { defineModule } from '@onceworlds/engine';
 import { UI, servicesOf } from '@onceworlds/engine/modules';
 import { Aim, Beat, Board, Hand, RoundClock, Seat } from './components.js';
 import { boardOf, mySeat, plainStones } from './queries.js';
-import { BEATS, STONE, TABLE, danger, targetTilt } from './rules.js';
+import { BEATS, BOULDER_KEPT, STONE, TABLE, danger, targetTilt } from './rules.js';
 import { COLORS, seatStyle } from './theme.js';
 
 // The HUD answers "what now?" at a glance: the lean (a marble that rolls to the low side, red past the tipping point, and a ghost marble
@@ -36,6 +36,7 @@ export function hudState(world, me) {
     armed: beat.armed,
     aimed: beat.aimed,
     hasAim: !!aim && aim.beat === clock.beat && clock.phase === 'aim',
+    double: clock.double,
   };
 }
 
@@ -78,7 +79,29 @@ const pips = (state, color) =>
     },
   });
 
-export function hudTree(state) {
+/** Your boulder: a dark puck, lit when armed, faded once used. With a keyboard it is a button too (on a phone the platform's button is). */
+function boulderChip(state, onToggle) {
+  if (state.seat < 0) return null;
+  const style = seatStyle(state.seat);
+  const chip = UI.custom({
+    w: 40,
+    h: 40,
+    draw(p, r) {
+      const cx = r.x + r.w / 2;
+      const cy = r.y + r.h / 2;
+      p.withAlpha(state.boulder ? 1 : 0.3, () => {
+        if (state.armed && state.boulder) p.circle(cx, cy, 19, { fill: '#00000000', stroke: COLORS.gold, strokeWidth: 4 });
+        p.circle(cx, cy, 14, { fill: style.edge, stroke: COLORS.ink, strokeWidth: 2 });
+        p.circle(cx, cy, 8, { fill: '#00000000', stroke: style.fill, strokeWidth: 3 });
+      });
+    },
+  });
+  const kept = state.boulder && !state.armed && UI.label(`+${BOULDER_KEPT.points}`, { size: 18, color: COLORS.gold, weight: 800 });
+  if (!onToggle || !state.boulder) return UI.column({ gap: 0, align: 'center' }, chip, kept);
+  return UI.button(state.armed ? 'ARMED' : 'BOULDER  B', { kind: state.armed ? 'primary' : 'secondary', onClick: onToggle });
+}
+
+export function hudTree(state, onToggle = null) {
   const color = state.seat >= 0 ? seatStyle(state.seat).fill : COLORS.gold;
   const word =
     state.phase === 'idle' ? UI.label('GET READY', { size: 24, color: 'accent' })
@@ -89,10 +112,11 @@ export function hudTree(state) {
     gauge(state),
     UI.column(
       { gap: 6, align: 'start' },
-      word,
+      UI.row({ gap: 8, align: 'center' }, word, state.double && UI.label('x2', { size: 22, color: COLORS.gold, weight: 800 })),
       pips(state, color),
       state.phase === 'aim' && UI.bar(state.fraction, { w: 8 * 14, h: 6, fill: state.left <= 1 ? COLORS.danger : color }),
     ),
+    boulderChip(state, onToggle),
   );
 }
 
@@ -113,7 +137,9 @@ export const GameUI = () =>
       const playing = ({ flow }) => flow !== null && flow.phase === 'playing' && !servicesOf(game).poster?.active;
       const me = () => servicesOf(game).net?.me ?? 'me';
       // Under the round and the clock (the standard `flow.hud`), which sit at the top centre.
-      ui.view('lopsided:hud', ({ world }) => hudTree(hudState(world, me())), { anchor: 'top', offset: [0, 58], order: 4, when: playing });
+      // With a keyboard and mouse the boulder is also a button on the HUD (B); on a phone the platform's touch button does it.
+      const toggle = () => servicesOf(game).input?.tap?.('boulder');
+      ui.view('lopsided:hud', ({ world, touch }) => hudTree(hudState(world, me()), touch ? null : toggle), { anchor: 'top', offset: [0, 58], order: 4, when: playing });
       ui.view('lopsided:prompt', ({ world }) => promptTree(hudState(world, me())) ?? UI.spacer(), { anchor: 'bottom', offset: [0, 40], order: 5, when: playing });
     },
   });

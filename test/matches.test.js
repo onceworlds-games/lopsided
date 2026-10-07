@@ -121,27 +121,31 @@ describe('a full match', () => {
 
 describe('aims and boulders', () => {
   it("a player's aim becomes their stone, on that spot, on every page; the boulder drops once a round", async () => {
-    const seen = { stones: [], other: [], hand: null };
+    // Every stone of p2's as each page first sees it (stones may slide on and off later: the table is tippy).
+    const first = [new Map(), new Map()];
+    let hand = null;
     const run = await match({ humans: 2, bots: 0, fill: 2 }, {
       seed: 9,
       latency: 40,
       onFrame: (r) => {
-        aimers((game, beat) => (game.room.me.id === 'p2' ? { x: -6, y: beat - 3, heavy: true } : { x: 7, y: 0, heavy: false }))(r);
+        aimers((game, beat) => (game.room.me.id === 'p2' ? { x: -6, y: beat - 3, heavy: true } : { x: 6, y: 3 - beat, heavy: false }))(r);
+        r.games.forEach((g, i) => {
+          for (const s of stonesOn(g)) if (s.seat === 1 && !first[i].has(s.beat)) first[i].set(s.beat, s);
+        });
         const clock = clockOf(r.games[0]);
-        if (clock.live && clock.phase === 'aim' && clock.beat === 3 && clock.t > 0.6 && !seen.stones.length) {
-          // After three drops: p2's stones are on its side, every one asked for a boulder but only the first is one.
-          seen.stones = stonesOn(r.games[0]).filter((s) => s.seat === 1);
-          seen.other = stonesOn(r.games[1]).filter((s) => s.seat === 1);
-          seen.hand = seatOn(r.games[1], 'p2')?.get(Hand).boulder;
-        }
+        if (clock.live && clock.phase === 'aim' && clock.beat === 3 && clock.t > 0.6 && hand === null) hand = seatOn(r.games[1], 'p2')?.get(Hand).boulder;
       },
+      until: (r) => r.matches > 0 || (hand !== null && first[1].size >= 3),
     });
     expect(run.errors).toEqual([]);
-    expect(seen.stones.length).toBe(3);
-    expect(seen.stones.filter((s) => s.heavy).map((s) => s.beat)).toEqual([0]);
-    for (const s of seen.stones) expect(s.x).toBeLessThan(-3);
-    expect(seen.other.length).toBe(3);
-    expect(seen.hand).toBe(false);
+    // p2's first three stones landed on its side, on both pages; every one asked for a boulder but only the first was one.
+    for (const seen of first) {
+      const three = [0, 1, 2].map((b) => seen.get(b));
+      expect(three.every(Boolean)).toBe(true);
+      for (const s of three) expect(s.x).toBeLessThan(-3);
+      expect(three.filter((s) => s.heavy).map((s) => s.beat)).toEqual([0]);
+    }
+    expect(hand).toBe(false);
   });
 
   it('an aim for a beat that already dropped, or off the table, cannot put a stone anywhere else', async () => {

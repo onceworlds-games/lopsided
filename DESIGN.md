@@ -19,7 +19,8 @@ there and the table tips toward *you*. Every stone anyone drops changes everyone
 4. **Read** the new lean (the bubble, the red glowing low edge, the live scores) and aim again.
 
 At the end of a round the stones still on the table score by ring: **center 1, middle 2, rim 3**. Each player also has one **boulder**
-per round: three times the weight, for a counterweight that saves your pile or a sledgehammer that dumps a rival's.
+per round: three times the weight, for a counterweight that saves your pile or a sledgehammer that dumps a rival's. Or keep it: a
+boulder still in hand at the end of the round is worth 3, so throwing it has to be worth more than that. The last round counts double.
 
 ## Why it's strategic
 
@@ -51,6 +52,42 @@ per round: three times the weight, for a counterweight that saves your pile or a
 3. **Tap-to-aim on a phone is precise and fast enough**, and a 3-second beat is long enough for a new player but short enough to keep
    the tension. (Mitigation: a big table filling the phone's width, a ghost stone, beats that start longer and speed up.)
 
-## Balance (filled in after simulation)
+## Balance (measured)
 
-See the end of this file once the bot strategy tournament has run.
+`node tools/balance.mjs 400 7` plays thousands of headless matches (3 rounds each) with the game's own rules and physics between six fixed
+strategies (`strategy.js`), seated at random:
+
+- **random**: anywhere on the table. **turtle**: only the middle ring. **greedy**: only the rim, anywhere.
+- **climber**: the rim on whichever side is up right now. **smart**: reads the table (its own expected points after the lean it
+  causes, hedged against the others' unknown drops, minding the others a little). **saboteur**: reads the table to hurt the leader.
+
+Win rate (fair share is 50% / 25% / 12.5%), the final tuning (stiffness 190, grip 0.14, drag 0.13, dome 0.006, kept boulder 3):
+
+| Strategy | 2 seats | 4 seats | 8 seats |
+|---|---|---|---|
+| saboteur | 76% | 38% | 21% |
+| climber | 76% | 33% | 19% |
+| smart | 71% | 49% | 20% |
+| greedy | 35% | 13% | 7% |
+| random | 21% | 9% | 3% |
+| turtle | 20% | 7% | 5% |
+
+Stones lost over the edge: 38% / 41% / 35%. Boulders thrown in about 16% of seat-rounds (kept otherwise).
+
+Head to head at 4 seats (two of each), the share of wins: **climber beats smart 54-43, smart beats saboteur 62-43, saboteur beats
+climber 63-42.** The three ways of reading the table form a cycle; none wins whatever it meets. The naive strategies (rim only, middle
+only, anywhere) lose to all three: hugging the middle never loses a stone and almost never wins.
+
+What changed on the way (each a rerun of the tournament):
+
+1. First tuning: 64% of stones lost at 8 seats and "turtle" won the most there: the table didn't scale with players. The stiffness now
+   grows with the square root of the seat count, so 8 players rock it about as much as 4.
+2. Slides were bimodal (nothing, or 8+ stones at once). A gentle dome and kinetic friction close to the grip made rim stones go first
+   and slides stop themselves; gravity was raised so a slide is a quick, readable snap instead of a creep.
+3. With "use it or lose it" boulders every bot saved its boulder for the last beat: every round ended in a boulder storm decided by
+   luck. A kept boulder now scores 3, so boulders are thrown only when they swing more than that, and the climax is a choice.
+4. That calmed the table so much that "climber" (always the uphill rim) won everything (losses fell to 14-20%). The table was made
+   tippier (stiffness 270 to 190, grip 0.15 to 0.14), which restored the cycle above.
+
+Bots in the game play `smart`, `saboteur` and `climber` by seat, slip into `greedy`/`random`/`climber`/`turtle` by their mistake rate,
+and wobble their aim by their aim noise.

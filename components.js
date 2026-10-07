@@ -107,4 +107,6 @@ export const RoundClock = defineResource('RoundClock', {
   left: t.f32(0),
   length: t.f32(0),
   elapsed: t.f32(0),
+  /** The last round of a match of several: its points count double. */
+  double: t.bool(false),
 });

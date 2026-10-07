@@ -2,7 +2,7 @@ import { Transform, defineSystem } from '@onceworlds/engine';
 import { servicesOf } from '@onceworlds/engine/modules';
 import { Aim, Board, Hand, LocalStone, Seat, Stone } from '../components.js';
 import { boardOf, plainStones } from '../queries.js';
-import { BEATS, clampAim, dropTime, pointsAt, scoreTable, targetTilt, tipperOf } from '../rules.js';
+import { BEATS, BOULDER_KEPT, clampAim, dropTime, pointsAt, scoreTable, targetTilt, tipperOf } from '../rules.js';
 import { sortStones, stepFallen, stepStones } from './physics.js';
 
 // The host's rules (`authority: 'host'`): only the host's page runs them, and a new host carries on from the replicated Board and stones.
@@ -88,20 +88,22 @@ export const HostPhysics = defineSystem({
     }
     for (const done of stepFallen(off, dt)) world.despawn(done);
 
-    // Live scores, for the seat pucks.
+    // Live scores, for the seat pucks: the stones on the table, and the boulder if it is still in hand.
     const score = scoreTable(on.filter((e) => !(e.stone.gone > 0)).map(({ stone, tr }) => ({ seat: stone.seat, x: tr.position.x, y: tr.position.y })));
     queries.seats.each((_e, seat, hand) => {
-      const now = score[seat.index] ?? 0;
+      const now = (score[seat.index] ?? 0) + (hand.boulder ? BOULDER_KEPT.points : 0);
       if (hand.score !== now) hand.score = now;
     });
   },
 });
 
-/** Each seat's points for what is on the table now: `{ [seat id]: points }`, every seat included. */
+/** Each seat's points now: its stones on the table, and the boulder if it kept it. `{ [seat id]: points }`, every seat included. */
 export function roundScores(world, seats) {
   const byIndex = {};
   for (const s of plainStones(world)) byIndex[s.seat] = (byIndex[s.seat] ?? 0) + pointsAt(s.x, s.y);
+  const kept = new Set();
+  world.query([Seat, Hand]).each((_e, seat, hand) => void (hand.boulder && kept.add(seat.index)));
   const out = {};
-  for (const seat of seats) out[seat.id] = byIndex[seat.index] ?? 0;
+  for (const seat of seats) out[seat.id] = (byIndex[seat.index] ?? 0) + (kept.has(seat.index) ? BOULDER_KEPT.points : 0);
   return out;
 }

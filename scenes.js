@@ -2,6 +2,7 @@ import { Transform, hashString } from '@onceworlds/engine';
 import { Aim, Board, Hand, Seat } from './components.js';
 import { roundScores } from './systems/host.js';
 import { startSandbox } from './systems/sandbox.js';
+import { isFinalRound } from './systems/clock.js';
 import { lobbyColor } from './systems/aim.js';
 import { buildTable } from './table.js';
 import { plainStones } from './queries.js';
@@ -43,7 +44,7 @@ export function lobbySpawn(ctx) {
 const lastRound = new WeakMap();
 
 export const roundRules = {
-  banner: 'KEEP YOUR STONES ON',
+  banner: (ctx) => (isFinalRound(ctx) ? 'FINAL ROUND: DOUBLE POINTS' : 'KEEP YOUR STONES ON'),
   seconds: Math.ceil(roundLength() + 6),
   setup(ctx) {
     buildTable(ctx.world);
@@ -79,5 +80,9 @@ export const roundRules = {
   },
 };
 
-/** The match's points are the rounds' points (not places): what the host worked out in `rank`. */
-export const roundPoints = (_ranking, ctx) => lastRound.get(ctx.world) ?? roundScores(ctx.world, ctx.seats);
+/** The match's points are the rounds' points (not places): what the host worked out in `rank`, doubled in the final round. */
+export function roundPoints(_ranking, ctx) {
+  const points = lastRound.get(ctx.world) ?? roundScores(ctx.world, ctx.seats);
+  if (!isFinalRound(ctx)) return points;
+  return Object.fromEntries(Object.entries(points).map(([id, p]) => [id, p * 2]));
+}

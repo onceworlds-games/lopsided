@@ -112,8 +112,9 @@ export const SeatLooks = defineSystem({
       const score = hand?.score ?? 0;
       const puck = world.entity(look.puck);
       if (look.shown !== score) {
+        // A lobby puck has no score yet: it shows the seat's symbol (its badge) alone.
         const text = world.entity(look.score);
-        if (text) text.get(Text).text = String(score);
+        if (text) text.get(Text).text = hand ? String(score) : '';
         if (puck && look.shown >= 0 && score > look.shown) feel?.squash(puck);
         look.shown = score;
       }
@@ -225,9 +226,10 @@ export const TableLook = defineSystem({
   },
 });
 
-/** Screen pixels the HUD takes at the top while a round is on (the round, the clock and the beat panel), and the strip kept at the bottom. */
+/** Screen pixels the HUD takes at the top while a round is on (the round, the clock and the beat panel), and the share kept at the bottom (more on a phone, for the thumbs and the touch button). */
 const HUD_TOP_PX = 186;
 const HUD_BOTTOM = 0.05;
+const HUD_BOTTOM_TALL = 0.11;
 /** Half the room the table and its seats need: on a wide screen across (with the seat columns) and down (the table), on a tall one across (the table) and down (with the seat rows). */
 const WIDE = { x: TABLE.radius + 9.5, y: TABLE.radius + 1.3 };
 const TALL = { x: TABLE.radius + 1.1, y: TABLE.radius + 5.8 };
@@ -241,7 +243,7 @@ export const CameraFit = defineSystem({
     const poster = servicesOf(game).poster?.active;
     const screenH = ui?.safe.screen?.h || 720;
     const top = poster || flow.phase === 'title' ? 0 : clamp(HUD_TOP_PX / screenH, 0.1, 0.3);
-    const bottom = poster || flow.phase === 'title' ? 0 : HUD_BOTTOM;
+    const bottom = poster || flow.phase === 'title' ? 0 : aspect >= 1.05 ? HUD_BOTTOM : HUD_BOTTOM_TALL;
     const free = 1 - top - bottom;
     const need = aspect >= 1.05 ? WIDE : TALL;
     const height = Math.max((need.x * 2) / aspect, (need.y * 2) / free);

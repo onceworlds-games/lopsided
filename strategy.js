@@ -4,7 +4,7 @@
 // A "view" is what a player can see: { seat, stones, tilt, k (the table's stiffness), beat, beats, boulder (still in hand), others (how
 // many other seats) }.
 
-import { BEATS, STONE, TABLE, capTilt, lossRisk, pointsAt, targetTilt } from './rules.js';
+import { BEATS, BOULDER_KEPT, STONE, TABLE, capTilt, lossRisk, pointsAt, targetTilt } from './rules.js';
 
 const R = TABLE.radius;
 
@@ -73,15 +73,17 @@ export function worth(view, aim, heavy, { spite = 0.35, caution = 1, leader = -1
   return total / weights;
 }
 
-/** The best drop by `worth`, with the boulder when it is worth `boulderGain` more than a stone (or on the last beat). */
+/**
+ * The best drop by `worth`, with the boulder only when it is worth more than keeping it (`BOULDER_KEPT` points at the round's end) plus
+ * `boulderGain` (how sure it wants to be).
+ */
 function best(view, rng, options = {}) {
-  const lastBeat = view.beat >= (view.beats ?? BEATS.perRound) - 1;
   let top = null;
   for (const aim of candidates(rng)) {
     const value = worth(view, aim, false, options);
     if (!top || value > top.value) top = { ...aim, heavy: false, value };
     if (view.boulder) {
-      const heavy = worth(view, aim, true, options) - (lastBeat ? 0 : options.boulderGain ?? 1.2);
+      const heavy = worth(view, aim, true, options) - BOULDER_KEPT.points - (options.boulderGain ?? 0.5);
       if (heavy > top.value) top = { ...aim, heavy: true, value: heavy };
     }
   }
@@ -95,18 +97,18 @@ export const STRATEGIES = {
     const at = polar(R * Math.sqrt(rng.float(0, 1)) * 0.97, rng.float(0, Math.PI * 2));
     return { ...at, heavy: view.boulder && rng.chance(0.15) };
   },
-  /** Only the middle ring: 1 point a stone, almost never lost. The boulder in the middle too. */
+  /** Only the middle ring: 1 point a stone, almost never lost. Keeps its boulder. */
   turtle(view, rng) {
-    return { ...polar(rng.float(0, R * 0.36), rng.float(0, Math.PI * 2)), heavy: view.boulder && view.beat >= 6 };
+    return { ...polar(rng.float(0, R * 0.36), rng.float(0, Math.PI * 2)), heavy: false };
   },
-  /** Only the rim, anywhere round it: 3 points a stone if it stays. */
+  /** Only the rim, anywhere round it: 3 points a stone if it stays. Keeps its boulder. */
   greedy(view, rng) {
-    return { ...polar(rng.float(R * 0.76, R * 0.96), rng.float(0, Math.PI * 2)), heavy: view.boulder && rng.chance(0.2) };
+    return { ...polar(rng.float(R * 0.76, R * 0.96), rng.float(0, Math.PI * 2)), heavy: false };
   },
-  /** The rim, on whichever side is up right now (which levels the table). The boulder on the last beat, uphill. */
+  /** The rim, on whichever side is up right now (which levels the table). Keeps its boulder. */
   climber(view, rng) {
     const angle = uphill(view, rng) + rng.float(-0.7, 0.7);
-    return { ...polar(rng.float(R * 0.74, R * 0.94), angle), heavy: view.boulder && view.beat >= (view.beats ?? BEATS.perRound) - 1 };
+    return { ...polar(rng.float(R * 0.74, R * 0.94), angle), heavy: false };
   },
   /** Reads the table: the drop worth most to itself, minding the others a little. */
   smart(view, rng) {
@@ -119,7 +121,7 @@ export const STRATEGIES = {
     for (const s of view.stones) if (!s.gone && s.seat !== view.seat) now[s.seat] = (now[s.seat] ?? 0) + pointsAt(s.x, s.y);
     let leader = -1;
     for (const [seat, points] of Object.entries(now)) if (leader < 0 || points > now[leader]) leader = Number(seat);
-    const { x, y, heavy } = best(view, rng, { spite: 0.9, leader, boulderGain: 0.6 });
+    const { x, y, heavy } = best(view, rng, { spite: 0.9, leader, boulderGain: 0 });
     return { x, y, heavy };
   },
 };

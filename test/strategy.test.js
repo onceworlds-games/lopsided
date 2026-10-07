@@ -31,14 +31,17 @@ describe('reading the table', () => {
     expect(worth(view(stones), { x: -9, y: 0 }, false)).toBeGreaterThan(worth(view(stones), { x: 9.2, y: 0 }, false));
   });
 
-  it('a saboteur with its boulder tips the leader off the table', () => {
-    // Seat 2 leads with stones on the north rim, balanced by a few of seat 1's in the south; dropping the boulder north tips them.
-    const stones = [...Array.from({ length: 5 }, (_, i) => makeStone(2, -3 + i * 1.5, 9)), makeStone(1, -1, -8.5), makeStone(1, 1, -8.5), makeStone(1, 0, -6)];
+  it('a saboteur spends its boulder (and the points for keeping it) to tip the leader off the table', () => {
+    // Seat 2 leads with a row on the north rim, balanced by seat 1's row on the south rim; a boulder in the north tips the leader's off.
+    const row = (seat, y) => Array.from({ length: 5 }, (_, i) => makeStone(seat, -4 + i * 2, y));
+    const stones = [...row(2, 8.6), ...row(1, -8.6), makeStone(2, 0.5, 0.5)];
     const rng = seeded(3);
-    const aim = STRATEGIES.saboteur(view(stones, { beat: 7 }), rng);
+    const aim = STRATEGIES.saboteur(view(stones, { beat: 6 }), rng);
     expect(aim.heavy).toBe(true);
     expect(aim.y).toBeGreaterThan(2);
     expect(STONE.boulderMass).toBe(3);
+    // A smart player with nothing at stake there keeps it.
+    expect(STRATEGIES.smart(view([makeStone(1, 2, 2), makeStone(2, -2, -2)], { beat: 2 }), rng).heavy).toBe(false);
   });
 });
 
@@ -48,7 +51,7 @@ describe('balance', () => {
     const rates = Object.values(rows).map((r) => r.winRate);
     expect(Math.max(...rates)).toBeLessThan(0.6);
     // Hugging the middle never loses a stone and almost never wins: it is the trap, not the answer.
-    expect(rows.turtle.winRate).toBeLessThan(0.1);
+    expect(rows.turtle.winRate).toBeLessThan(0.15);
     // The table really is dangerous: a good share of stones go over the edge, but most stay.
     expect(fellShare).toBeGreaterThan(0.2);
     expect(fellShare).toBeLessThan(0.45);

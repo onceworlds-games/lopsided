@@ -12,15 +12,15 @@ export const TABLE = {
   /** The table is gently domed: an extra outward slope of `dome` per unit from the middle (0.06 at the rim). Rim stones go first. */
   dome: 0.006,
   /** A resting stone starts to slide when the slope under it is steeper than this. */
-  grip: 0.15,
+  grip: 0.14,
   /** A sliding stone slows by this (kinetic friction, a little lower than the grip: once going, a slide carries). */
   drag: 0.13,
-  gravity: 30,
+  gravity: 55,
   /**
    * How much weight it takes to tip the table: tilt = (sum of mass x position) / stiffness, capped at `maxTilt`. A table for more players
    * is stiffer (see `stiffnessFor`), so eight players' stones rock it about as much as four players' do.
    */
-  stiffness: 270,
+  stiffness: 190,
   maxTilt: 0.24,
   /** The table swings toward its lean like a spring: a little wobble after every drop, settled in about a second. */
   spring: 22,
@@ -28,6 +28,9 @@ export const TABLE = {
 };
 
 export const STONE = { radius: 0.72, mass: 1, boulderRadius: 1.05, boulderMass: 3 };
+
+/** Points for a boulder still in hand when the round ends: using it has to be worth more than keeping it. */
+export const BOULDER_KEPT = { points: 3 };
 
 /** Rings, from the middle out: within `upTo` of the radius a stone scores `points`. */
 export const RINGS = [
@@ -92,11 +95,15 @@ export function pointsAt(x, y) {
   return 0;
 }
 
-/** Each seat's points for the stones on the table: `{ [seat]: points }` (every seat in `seats` gets an entry). */
-export function scoreTable(stones, seats = []) {
+/**
+ * Each seat's points for the stones on the table: `{ [seat]: points }` (every seat in `seats` gets an entry). `kept` lists the seats
+ * that still hold their boulder, worth `BOULDER_KEPT.points` each.
+ */
+export function scoreTable(stones, seats = [], kept = []) {
   const score = {};
   for (const seat of seats) score[seat] = 0;
   for (const s of stones) if (!s.gone) score[s.seat] = (score[s.seat] ?? 0) + pointsAt(s.x, s.y);
+  for (const seat of kept) score[seat] = (score[seat] ?? 0) + BOULDER_KEPT.points;
   return score;
 }
 

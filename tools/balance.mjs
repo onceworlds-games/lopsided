@@ -43,14 +43,17 @@ export function playRound(strategies, rng, stats = { fell: 0, dropped: 0, tilts:
     );
     aims.forEach((aim, seat) => {
       const heavy = !!aim.heavy && boulder[seat];
-      if (heavy) boulder[seat] = false;
+      if (heavy) {
+        boulder[seat] = false;
+        stats.boulders = (stats.boulders ?? 0) + 1;
+      }
       stones.push(makeStone(seat, aim.x, aim.y, heavy, beat));
       stats.dropped++;
     });
     run(table, stones, beat + 1 < BEATS.perRound ? beatLength(beat + 1) : BEATS.settle, stats);
     stats.tilts.push(Math.hypot(table.x, table.y));
   }
-  return scoreTable(stones, strategies.map((_s, i) => i));
+  return scoreTable(stones, strategies.map((_s, i) => i), boulder.flatMap((kept, seat) => (kept ? [seat] : [])));
 }
 
 /** A match of `rounds` rounds: total points by seat. */
@@ -84,7 +87,7 @@ export function tournament(pool, seats, matches, seed) {
     // Win share relative to a fair share (1 / seats): 1.0 is exactly fair, 2.0 wins twice its share.
     out[name] = { seats: row.seats, winRate: row.seats ? row.wins / row.seats : 0, edge: row.seats ? (row.wins / row.seats) * seats : 0, points: row.seats ? row.points / row.seats : 0 };
   }
-  return { rows: out, fellShare: stats.fell / Math.max(1, stats.dropped) };
+  return { rows: out, fellShare: stats.fell / Math.max(1, stats.dropped), boulderShare: (stats.boulders ?? 0) / Math.max(1, stats.dropped / BEATS.perRound) };
 }
 
 /** Head to head at a table of `seats`: half the seats play A, half B (in alternating seats). A's share of the wins. */
@@ -116,8 +119,8 @@ if (main) {
     process.exit(0);
   }
   for (const seats of [2, 4, 8]) {
-    const { rows, fellShare } = tournament(STRATEGY_NAMES, seats, matches, seed + seats);
-    console.log(`\n${seats} seats, ${matches} matches (stones lost: ${(fellShare * 100).toFixed(0)}%)`);
+    const { rows, fellShare, boulderShare } = tournament(STRATEGY_NAMES, seats, matches, seed + seats);
+    console.log(`\n${seats} seats, ${matches} matches (stones lost: ${(fellShare * 100).toFixed(0)}%, boulders dropped in ${(boulderShare * 100).toFixed(0)}% of seat-rounds)`);
     console.log('strategy   win%   edge  points/match');
     for (const [name, row] of Object.entries(rows).sort((a, b) => b[1].edge - a[1].edge)) {
       console.log(`${name.padEnd(9)} ${(row.winRate * 100).toFixed(1).padStart(5)}  ${row.edge.toFixed(2).padStart(5)}  ${row.points.toFixed(1).padStart(6)}`);

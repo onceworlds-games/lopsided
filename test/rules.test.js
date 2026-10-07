@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { controls } from '../actions.js';
 import {
   BEATS,
+  BOULDER_KEPT,
   STONE,
   TABLE,
   beatLength,
@@ -56,6 +57,8 @@ describe('scoring', () => {
     expect(pointsAt(R * 1.01, 0)).toBe(0);
     const stones = [makeStone(0, 0, 0), makeStone(0, R * 0.9, 0), makeStone(1, 0, R * 0.5), { ...makeStone(1, R * 0.9, 0), gone: true }];
     expect(scoreTable(stones, [0, 1, 2])).toEqual({ 0: 4, 1: 2, 2: 0 });
+    // A boulder kept to the end is worth a rim stone.
+    expect(scoreTable(stones, [0, 1, 2], [2])).toEqual({ 0: 4, 1: 2, 2: BOULDER_KEPT.points });
   });
 });
 
@@ -108,12 +111,13 @@ describe('the physics', () => {
   });
 
   it('a boulder on the far rim saves a pile that would have slid', () => {
-    const pile = () => Array.from({ length: 7 }, (_, i) => makeStone(1, 9, -2 + i * 0.7));
+    const pile = () => Array.from({ length: 4 }, (_, i) => makeStone(1, 8.6, -2 + i * 1.5));
     const without = pile();
     const lost = run(level(), without, 6).length;
     const saved = pile();
     const lostWithBoulder = run(level(), [...saved, makeStone(0, -9.2, 0, true)], 6).filter((s) => s.seat === 1).length;
-    expect(lost).toBeGreaterThan(lostWithBoulder);
+    expect(lost).toBe(4);
+    expect(lostWithBoulder).toBe(0);
   });
 
   it('never leaves two stones overlapping, even dropped on the same spot', () => {
