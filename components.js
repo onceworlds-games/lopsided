@@ -89,6 +89,8 @@ export const Beat = defineResource('Beat', {
   aimed: t.bool(false),
   /** The pointer went down on the table and is still down: dragging moves the aim. */
   dragging: t.bool(false),
+  /** The table creaked when it passed its tipping point (again only once it has come back). */
+  creaked: t.bool(false),
 });
 
 /** The latest "TIPPED BY ..." to show over the table: text, colour and when it began (the world's clock). */

@@ -40,6 +40,8 @@ The round's clock is a pure function of the match clock (`clockAt` in `rules.js`
 | Longer or shorter beats, more beats | `BEATS` in `rules.js` |
 | Different points | `RINGS` in `rules.js` |
 | Bigger stones, a heavier boulder | `STONE` in `rules.js` |
+| What keeping the boulder is worth | `BOULDER_KEPT` in `rules.js` |
+| No double points in the last round | `isFinalRound` in `systems/clock.js` |
 | How bots play | `STYLE_BY_SEAT` and `SLIPS` in `bots.js`; the strategies in `strategy.js` |
 
 ## Tests

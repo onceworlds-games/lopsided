@@ -42,6 +42,13 @@ export const BeatFeel = defineSystem({
     }
     if (!board) return;
 
+    // The table creaks as it passes its tipping point (once each time it crosses).
+    const risk = danger(leanOf(world));
+    if (risk >= 1 && !beat.creaked) {
+      beat.creaked = true;
+      audio?.play('door.close', { pitch: 0.55, volume: 0.5 });
+    } else if (risk < 0.8) beat.creaked = false;
+
     // The drop: one thud for everyone's stones together.
     if (board.dropped > beat.dropped) {
       beat.dropped = board.dropped;

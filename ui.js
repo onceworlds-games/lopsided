@@ -120,12 +120,17 @@ export function hudTree(state, onToggle = null) {
   );
 }
 
-/** The two-word prompts: what to do now, shown only while it matters. */
+/** The first prompt, over the middle of the (still empty) table until you first aim: what the game is, in three words. */
+export function firstTree(state) {
+  if ((state.phase !== 'aim' && state.phase !== 'idle') || state.aimed || state.seat < 0) return null;
+  return UI.label('TAP THE TABLE', { size: 34, color: COLORS.white, weight: 800, outline: true });
+}
+
+/** The two-word prompts under the table: what to do now, shown only while it matters. */
 export function promptTree(state) {
   if (state.phase !== 'aim' && state.phase !== 'idle') return null;
   if (state.armed && state.boulder) return UI.label('BOULDER ARMED', { size: 26, color: COLORS.gold, weight: 800, outline: true });
-  if (!state.aimed && state.seat >= 0) return UI.label(state.phase === 'idle' ? 'TAP THE TABLE TO AIM' : 'TAP THE TABLE', { size: 30, color: COLORS.white, weight: 800, outline: true });
-  if (state.phase === 'aim' && !state.hasAim && state.seat >= 0 && state.left < 2.5) return UI.label('AIM!', { size: 30, color: COLORS.danger, weight: 800, outline: true });
+  if (state.phase === 'aim' && state.aimed && !state.hasAim && state.seat >= 0 && state.left < 2.5) return UI.label('AIM!', { size: 30, color: COLORS.danger, weight: 800, outline: true });
   return null;
 }
 
@@ -140,6 +145,7 @@ export const GameUI = () =>
       // With a keyboard and mouse the boulder is also a button on the HUD (B); on a phone the platform's touch button does it.
       const toggle = () => servicesOf(game).input?.tap?.('boulder');
       ui.view('lopsided:hud', ({ world, touch }) => hudTree(hudState(world, me()), touch ? null : toggle), { anchor: 'top', offset: [0, 58], order: 4, when: playing });
-      ui.view('lopsided:prompt', ({ world }) => promptTree(hudState(world, me())) ?? UI.spacer(), { anchor: 'bottom', offset: [0, 40], order: 5, when: playing });
+      ui.view('lopsided:first', ({ world }) => firstTree(hudState(world, me())) ?? UI.spacer(), { anchor: 'center', order: 5, when: playing });
+      ui.view('lopsided:prompt', ({ world }) => promptTree(hudState(world, me())) ?? UI.spacer(), { anchor: 'bottom', offset: [0, 24], order: 5, when: playing });
     },
   });

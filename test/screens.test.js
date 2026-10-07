@@ -6,7 +6,7 @@ import { LocalStone, Stone } from '../components.js';
 import { gameConfig } from '../game.config.js';
 import { seatSpot } from '../look.js';
 import { TABLE } from '../rules.js';
-import { hudTree, promptTree } from '../ui.js';
+import { firstTree, hudTree, promptTree } from '../ui.js';
 import { clockOf, inputOf, phaseOf, stonesOn } from './helpers.js';
 import { fakeCanvas, strictBackend } from './fakeCanvas.js';
 
@@ -47,9 +47,9 @@ describe('the HUD', () => {
         expect(hud.rect.x).toBeGreaterThanOrEqual(0);
         expect(hud.rect.x + hud.rect.w).toBeLessThanOrEqual(390);
         expect(hud.rect.y + hud.rect.h).toBeLessThan(170);
-        const prompt = promptTree(state);
-        if (prompt) {
-          const { rect } = ui.preview(prompt, { width: 390, height: 844, touch: true, anchor: 'bottom' });
+        for (const [prompt, anchor] of [[promptTree(state), 'bottom'], [firstTree(state), 'center']]) {
+          if (!prompt) continue;
+          const { rect } = ui.preview(prompt, { width: 390, height: 844, touch: true, anchor });
           expect(rect.x).toBeGreaterThanOrEqual(0);
           expect(rect.x + rect.w).toBeLessThanOrEqual(390);
         }
@@ -59,7 +59,8 @@ describe('the HUD', () => {
 
   it('says what to do: tap before the first aim, the boulder when armed, AIM! when time is short', () => {
     const text = (tree) => JSON.stringify(tree);
-    expect(text(promptTree({ ...base, phase: 'aim' }))).toContain('TAP THE TABLE');
+    expect(text(firstTree({ ...base, phase: 'aim' }))).toContain('TAP THE TABLE');
+    expect(firstTree({ ...base, phase: 'aim', aimed: true })).toBeNull();
     expect(text(promptTree({ ...base, phase: 'aim', armed: true }))).toContain('BOULDER ARMED');
     expect(text(promptTree({ ...base, phase: 'aim', aimed: true, left: 1.5 }))).toContain('AIM!');
     expect(promptTree({ ...base, phase: 'aim', aimed: true, hasAim: true })).toBeNull();
