@@ -1,0 +1,34 @@
+{
+  "slug": "lopsided",
+  "name": "Lopsided",
+  "description": "One wobbly table for everyone. Drop stones where they score most, tip the table toward your rivals, and watch their pile slide off.",
+  "engine": "1",
+  "dir": ".",
+  "productionBranch": "main",
+  "genre": "Party",
+  "controls": [
+    {
+      "keys": [
+        "W",
+        "A",
+        "S",
+        "D"
+      ],
+      "action": "Move"
+    },
+    {
+      "keys": [
+        "Arrows"
+      ],
+      "action": "Move"
+    },
+    {
+      "keys": [
+        "Space",
+        "Shift"
+      ],
+      "action": "Dash"
+    }
+  ],
+  "help": "Run to the tiles with the called color and shape before the floor drops. Fall and you float on as a ghost until the next round."
+}
